@@ -22,10 +22,10 @@ def build_municipio_queue(comunidad: str, min_poblacion: int) -> List[Dict]:
 async def run_comunidad(
     comunidad: str,
     min_poblacion: int,
-    process_city: Callable[[str, str], Awaitable[int]],
+    process_city: Callable[[str, str, int], Awaitable[int]],
     is_full: Callable[[], bool] = lambda: False,
 ) -> int:
-    """Ejecuta `process_city(city_str, municipio_origen)` para cada municipio de la CCAA.
+    """Ejecuta `process_city(city_str, municipio_origen, poblacion)` para cada municipio de la CCAA.
 
     Si `is_full()` devuelve True después de un municipio, el bucle se detiene.
     Devuelve el total acumulado de registros válidos. process_city debe encargarse
@@ -48,7 +48,7 @@ async def run_comunidad(
             idx, total_municipios, city_str, m["poblacion"],
         )
         try:
-            written = await process_city(city_str, m["nombre"])
+            written = await process_city(city_str, m["nombre"], int(m["poblacion"]))
             total_records += written
             LOGGER.info(
                 "[Municipio %d/%d] %s → %d nuevos válidos (acumulado: %d)",

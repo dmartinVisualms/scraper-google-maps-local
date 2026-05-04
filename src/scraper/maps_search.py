@@ -7,6 +7,9 @@ from dataclasses import dataclass
 
 from playwright.async_api import Page
 
+from src.geo.coords import coords_from_maps_url
+from src.geo.polygon import point_in_polygon
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -21,6 +24,7 @@ class SearchResultRef:
 class SearchResults:
     refs: list[SearchResultRef]
     reached_end: bool  # True = Google Maps confirmó fin de lista; False = parada por heurística
+    density_stop: bool = False  # True = parada porque <5% de los nuevos refs caen en el polígono
 
 
 RESULT_LINK_SELECTOR = 'a.hfpxzc'
@@ -90,13 +94,22 @@ async def open_maps_and_search(
     lat: float | None = None,
     lon: float | None = None,
     zoom: int | None = None,
+    text_only: bool = False,
 ) -> None:
-    """Abre Google Maps, opcionalmente posicionado en las coordenadas indicadas, y ejecuta la búsqueda."""
-    if lat is not None and lon is not None and zoom is not None:
+    """Abre Google Maps y ejecuta la búsqueda.
+
+    Si `text_only=True` (o no se pasan coords) se va a la home de Maps sin
+    forzar un viewport, dejando que Google trate la query como búsqueda
+    administrativa ("zapaterías en Vedra"). Útil para municipios pequeños
+    donde el viewport-bias expande la búsqueda a localidades vecinas.
+    """
+    if not text_only and lat is not None and lon is not None and zoom is not None:
         viewport_url = f"https://www.google.com/maps/@{lat},{lon},{zoom}z"
         LOGGER.info("Viewport: %.5f, %.5f zoom=%s", lat, lon, zoom)
         await page.goto(viewport_url, wait_until="domcontentloaded")
     else:
+        if text_only:
+            LOGGER.info("Modo textual: búsqueda administrativa sin viewport")
         await page.goto("https://www.google.com/maps", wait_until="domcontentloaded")
 
     await _maybe_handle_consent(page)
@@ -131,10 +144,22 @@ async def collect_result_refs(
     slow_ms: int,
     max_results: int,
     no_growth_limit: int = 12,
+    polygon=None,
+    density_threshold: float = 0.05,
+    density_window: int = 3,
 ) -> SearchResults:
+    """Recolecta refs de la lista de resultados.
+
+    Si `polygon` se proporciona, se calcula el ratio de refs nuevos cuyas
+    coordenadas caen dentro del polígono. Tras `density_window` batches
+    consecutivos con ratio < `density_threshold` se aborta el scroll
+    (Google está expandiendo la búsqueda a zonas externas).
+    """
     seen: dict[str, SearchResultRef] = {}
     no_growth = 0
     reached_end = False
+    density_stop = False
+    recent_ratios: list[float] = []  # ratios de batches con refs nuevos
 
     container = await _get_scroll_container(page)
     if container is None:
@@ -146,6 +171,8 @@ async def collect_result_refs(
         count = await links.count()
 
         before = len(seen)
+        new_in_batch = 0
+        new_in_polygon = 0
         for idx in range(count):
             link = links.nth(idx)
             href = (await link.get_attribute("href")) or ""
@@ -155,17 +182,43 @@ async def collect_result_refs(
             name = clean_name(await link.get_attribute("aria-label") or "")
             if href not in seen:
                 seen[href] = SearchResultRef(name=name, maps_url=href)
+                new_in_batch += 1
+                if polygon is not None:
+                    blat, blon = coords_from_maps_url(href)
+                    if blat is not None and point_in_polygon(polygon, blat, blon):
+                        new_in_polygon += 1
                 new_total = len(seen)
                 if new_total % 10 == 0:
                     LOGGER.info("Descubriendo resultados: %s encontrados…", new_total)
                 if max_results > 0 and new_total >= max_results:
                     LOGGER.info("Se alcanzó max-results=%s", max_results)
-                    return SearchResults(refs=list(seen.values()), reached_end=False)
+                    return SearchResults(
+                        refs=list(seen.values()), reached_end=False, density_stop=False,
+                    )
 
         if len(seen) == before:
             no_growth += 1
         else:
             no_growth = 0
+
+        # Early stop por densidad: si el polígono está activo y los últimos
+        # `density_window` batches con refs nuevos cayeron casi todos fuera, parar.
+        if polygon is not None and new_in_batch > 0:
+            ratio = new_in_polygon / new_in_batch
+            recent_ratios.append(ratio)
+            if len(recent_ratios) > density_window:
+                recent_ratios = recent_ratios[-density_window:]
+            if (
+                len(recent_ratios) == density_window
+                and all(r < density_threshold for r in recent_ratios)
+            ):
+                density_stop = True
+                LOGGER.info(
+                    "✓ Parada por densidad: últimos %d batches con <%.0f%% en polígono "
+                    "(Google expandió fuera del municipio)",
+                    density_window, density_threshold * 100,
+                )
+                break
 
         # Comprobar fin de lista real de Google Maps
         if await _has_reached_end(page):
@@ -186,7 +239,9 @@ async def collect_result_refs(
         await container.evaluate("el => el.scrollBy(0, el.clientHeight)")
         await asyncio.sleep((slow_ms + random.randint(20, 180)) / 1000)
 
-    return SearchResults(refs=list(seen.values()), reached_end=reached_end)
+    return SearchResults(
+        refs=list(seen.values()), reached_end=reached_end, density_stop=density_stop,
+    )
 
 
 def clean_name(value: str) -> str:

@@ -41,18 +41,15 @@ def build_sector_grid(
 
 def filter_by_polygon(sectors: list, geojson: Optional[dict]) -> list:
     """Filtra sectores cuyo centro queda fuera del polígono de la zona."""
-    if not geojson:
+    from src.geo.polygon import point_in_polygon, polygon_from_geojson
+
+    polygon = polygon_from_geojson(geojson)
+    if polygon is None:
         LOGGER.warning("Sin polígono GeoJSON — usando todos los sectores del bbox")
         return sectors
-    try:
-        from shapely.geometry import Point, shape  # type: ignore
-        polygon = shape(geojson)
-        filtered = [s for s in sectors if polygon.contains(Point(s.lon, s.lat))]
-        LOGGER.info(
-            "GeoFilter: %d/%d sectores dentro del polígono",
-            len(filtered), len(sectors),
-        )
-        return filtered
-    except ImportError:
-        LOGGER.warning("shapely no instalado — sin filtro geográfico")
-        return sectors
+    filtered = [s for s in sectors if point_in_polygon(polygon, s.lat, s.lon)]
+    LOGGER.info(
+        "GeoFilter: %d/%d sectores dentro del polígono",
+        len(filtered), len(sectors),
+    )
+    return filtered
