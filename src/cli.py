@@ -125,7 +125,7 @@ async def _process_refs(
     municipio_origen: str = "",
     municipio_polygon=None,
     search_category: str = "",
-) -> None:
+) -> dict:
     """Procesa una lista de refs escribiendo cada registro al CSV inmediatamente.
     Actualiza metrics en tiempo real y emite STATS cada 10 registros.
 
@@ -134,9 +134,17 @@ async def _process_refs(
       del municipio se descartan (preferido — preciso, sin falsos positivos
       por límites administrativos).
     - En su defecto, si `sector` se proporciona, se usa su bbox como antes.
+
+    Devuelve un dict `local_stats` con el desglose del sector:
+      {processed, errors, no_name, filtered_polygon, filtered_category}
     """
-    local_processed = 0
-    local_errors = 0
+    local_stats = {
+        "processed": 0,
+        "errors": 0,
+        "no_name": 0,
+        "filtered_polygon": 0,
+        "filtered_category": 0,
+    }
     bbox = sector.bbox() if sector is not None else None
 
     for ref in refs:
@@ -146,7 +154,7 @@ async def _process_refs(
                 "[%s] Cap global de %d alcanzado — saltando refs restantes",
                 sector_label, csv_writer.total_written,
             )
-            return
+            return local_stats
         url = ref.maps_url
 
         async def go_to_detail() -> None:
@@ -160,7 +168,7 @@ async def _process_refs(
                 attempts=2,
             )
             if not record.nombre:
-                local_errors += 1
+                local_stats["no_name"] += 1
                 metrics["errors"] += 1
                 LOGGER.warning("[%s] Sin nombre (omitido): %s", sector_label, url)
                 continue
@@ -170,6 +178,7 @@ async def _process_refs(
             if blat is not None:
                 if municipio_polygon is not None:
                     if not point_in_polygon(municipio_polygon, blat, blon):
+                        local_stats["filtered_polygon"] += 1
                         metrics["filtered_out_of_polygon"] += 1
                         LOGGER.debug(
                             "[%s] Filtrado fuera del polígono del municipio: %s (%.5f, %.5f)",
@@ -179,6 +188,7 @@ async def _process_refs(
                 elif bbox is not None:
                     min_lat, max_lat, min_lon, max_lon = bbox
                     if not (min_lat <= blat <= max_lat and min_lon <= blon <= max_lon):
+                        local_stats["filtered_polygon"] += 1
                         metrics["filtered_out_of_polygon"] += 1
                         LOGGER.debug(
                             "[%s] Filtrado fuera de bbox: %s (%.5f, %.5f)",
@@ -189,6 +199,7 @@ async def _process_refs(
             # Filtrado por categoría: descartar negocios cuya categoría
             # de Google Maps no corresponde con el término de búsqueda.
             if search_category and not category_matches(search_category, record.categoria):
+                local_stats["filtered_category"] += 1
                 metrics["filtered_out_of_category"] += 1
                 LOGGER.debug(
                     "[%s] Filtrado por categoría: '%s' → categoria='%s'",
@@ -200,13 +211,14 @@ async def _process_refs(
                 record.municipio_origen = municipio_origen
 
             await csv_writer.write_record(record)
-            local_processed += 1
+            local_stats["processed"] += 1
             metrics["processed"] += 1
 
-            if local_processed % 10 == 0:
+            if local_stats["processed"] % 10 == 0:
                 LOGGER.info(
                     "[%s] Progreso: %d/%d procesados | %d válidos | %d errores",
-                    sector_label, local_processed, len(refs), csv_writer.total_written, local_errors,
+                    sector_label, local_stats["processed"], len(refs),
+                    csv_writer.total_written, local_stats["errors"],
                 )
                 LOGGER.info(
                     "STATS discovered=%d processed=%d valid=%d errors=%d",
@@ -214,9 +226,36 @@ async def _process_refs(
                     csv_writer.total_written, metrics["errors"],
                 )
         except Exception as exc:  # noqa: BLE001
-            local_errors += 1
+            local_stats["errors"] += 1
             metrics["errors"] += 1
             LOGGER.warning("[%s] Error procesando %s: %s", sector_label, url, exc)
+
+    return local_stats
+
+
+def _log_refs_breakdown(label: str, discovered: int, written: int, local_stats: dict) -> None:
+    """Emite un log INFO con el desglose por sector cuando algunos descubrimientos
+    no llegaron al CSV. Da visibilidad al usuario sobre qué se ha descartado y por
+    qué (polígono, categoría, errores) sin tener que leer el resumen final."""
+    if discovered == 0:
+        return
+    if written >= discovered:
+        return
+    fp = local_stats.get("filtered_polygon", 0)
+    fc = local_stats.get("filtered_category", 0)
+    err = local_stats.get("errors", 0) + local_stats.get("no_name", 0)
+    if discovered > 0 and written == 0:
+        LOGGER.info(
+            "[%s] ⚠ %d descubiertos → 0 al CSV "
+            "(%d fuera de polígono, %d categoría no coincide, %d errores)",
+            label, discovered, fp, fc, err,
+        )
+    else:
+        LOGGER.info(
+            "[%s] %d descubiertos → %d al CSV "
+            "(%d filtrados pol., %d categ., %d err.)",
+            label, discovered, written, fp, fc, err,
+        )
 
 
 MIN_CELL_DEG = 0.002  # ~220 m — límite mínimo de subdivisión adaptativa
@@ -235,6 +274,27 @@ def _subdivide(sector: Sector) -> list:
     ]
 
 
+def _filter_subdivisions(sub_sectors: list, grid_polygon, parent_label: str) -> list:
+    """Descarta sub-sectores cuyo centro caiga fuera del `grid_polygon` (núcleo
+    urbano usado para construir el grid). Si `grid_polygon` es None, devuelve
+    los hijos sin filtrar (passthrough — preserva el comportamiento previo).
+
+    Imprescindible para que la subdivisión adaptativa NO arrastre la búsqueda
+    a zonas no urbanas: cuando un sector borde aporta resultados, sus 4 hijos
+    pueden quedar fuera del polígono y, sin filtro, generan trabajo perdido.
+    """
+    if grid_polygon is None:
+        return sub_sectors
+    keep = [s for s in sub_sectors if point_in_polygon(grid_polygon, s.lat, s.lon)]
+    dropped = len(sub_sectors) - len(keep)
+    if dropped > 0:
+        LOGGER.info(
+            "[%s] ↳ Subdivisión: %d/%d hijos descartados por estar fuera del núcleo urbano",
+            parent_label, dropped, len(sub_sectors),
+        )
+    return keep
+
+
 async def _process_sector(
     label: str,
     sector: Sector,
@@ -247,6 +307,7 @@ async def _process_sector(
     municipio_polygon=None,
     checkpoint: Optional[CheckpointStore] = None,
     municipio_label: str = "",
+    grid_polygon=None,
 ) -> int:
     """Procesa un sector geográfico: search → collect → extract → write CSV.
 
@@ -278,7 +339,7 @@ async def _process_sector(
             label,
         )
         if sector.cell_deg > MIN_CELL_DEG:
-            sub_sectors = _subdivide(sector)
+            sub_sectors = _filter_subdivisions(_subdivide(sector), grid_polygon, label)
             sub_tasks = [
                 _process_sector(
                     f"{label}.{i + 1}", sub, pool, query, csv_writer, args, metrics,
@@ -286,6 +347,7 @@ async def _process_sector(
                     municipio_polygon=municipio_polygon,
                     checkpoint=checkpoint,
                     municipio_label=municipio_label,
+                    grid_polygon=grid_polygon,
                 )
                 for i, sub in enumerate(sub_sectors)
             ]
@@ -329,7 +391,7 @@ async def _process_sector(
         )
 
         before_written = csv_writer.total_written
-        await _process_refs(
+        local_stats = await _process_refs(
             refs=result.refs,
             page=pooled.page,
             query=query,
@@ -343,6 +405,9 @@ async def _process_sector(
             search_category=args.category,
         )
         written_in_sector = csv_writer.total_written - before_written
+
+        # Desglose visible cuando descubrimos refs pero pocos/ninguno terminan en CSV
+        _log_refs_breakdown(label, discovered, written_in_sector, local_stats or {})
 
         LOGGER.info(
             "[%s] Sector completado: %d nuevos al CSV (total: %d)",
@@ -385,7 +450,7 @@ async def _process_sector(
     total_written = written_in_sector
     if needs_subdivision:
         if sector.cell_deg > MIN_CELL_DEG:
-            sub_sectors = _subdivide(sector)
+            sub_sectors = _filter_subdivisions(_subdivide(sector), grid_polygon, label)
             LOGGER.info(
                 "[%s] ↳ Subdividiendo en %d (cell %.4f° → %.4f°)",
                 label, len(sub_sectors), sector.cell_deg, sector.cell_deg / 2,
@@ -404,6 +469,7 @@ async def _process_sector(
                     municipio_polygon=municipio_polygon,
                     checkpoint=checkpoint,
                     municipio_label=municipio_label,
+                    grid_polygon=grid_polygon,
                 )
                 for i, sub in enumerate(sub_sectors)
             ]
@@ -464,11 +530,24 @@ async def _build_sectors_for_city(
         geodata = await fetch_city_geodata(city)
     cell_deg = grid_params["cell_deg"]
     zoom = grid_params["zoom"]
-    raw_sectors = build_sector_grid(geodata.bbox, cell_deg=cell_deg, zoom=zoom)
-    sectors = filter_by_polygon(raw_sectors, geodata.polygon_geojson)
+
+    # Si Nominatim devolvió un polígono del núcleo urbano (place=city/town/...),
+    # usarlo para construir el grid — más preciso que el término municipal.
+    # Si no, caer al polígono administrativo (comportamiento previo).
+    if geodata.grid_bbox is not None and geodata.grid_polygon_geojson is not None:
+        grid_bbox = geodata.grid_bbox
+        grid_geojson = geodata.grid_polygon_geojson
+        scope_label = f"núcleo urbano ({geodata.grid_source})"
+    else:
+        grid_bbox = geodata.bbox
+        grid_geojson = geodata.polygon_geojson
+        scope_label = "término municipal"
+
+    raw_sectors = build_sector_grid(grid_bbox, cell_deg=cell_deg, zoom=zoom)
+    sectors = filter_by_polygon(raw_sectors, grid_geojson)
     LOGGER.info(
-        "Grid generado: %d sectores (de %d en bbox) para %s [zoom=%d cell=%.4f°]",
-        len(sectors), len(raw_sectors), geodata.display_name, zoom, cell_deg,
+        "Grid generado: %d sectores (de %d en bbox) para %s [%s, zoom=%d cell=%.4f°]",
+        len(sectors), len(raw_sectors), geodata.display_name, scope_label, zoom, cell_deg,
     )
     return sectors
 
@@ -507,7 +586,8 @@ async def _run_text_search(
             "STATS discovered=%d processed=%d valid=%d errors=%d",
             metrics["discovered"], metrics["processed"], csv_writer.total_written, metrics["errors"],
         )
-        await _process_refs(
+        before_written = csv_writer.total_written
+        local_stats = await _process_refs(
             refs=result.refs,
             page=pooled.page,
             query=query,
@@ -520,6 +600,8 @@ async def _run_text_search(
             municipio_polygon=municipio_polygon,
             search_category=args.category,
         )
+        written_in_text = csv_writer.total_written - before_written
+        _log_refs_breakdown(label, discovered, written_in_text, local_stats or {})
         LOGGER.info("[%s] Búsqueda textual completada: %d válidos en CSV", label, csv_writer.total_written)
     except Exception as exc:  # noqa: BLE001
         LOGGER.error("[%s] Búsqueda textual falló: %s", label, exc)
@@ -589,7 +671,9 @@ async def _process_city_with_pool(
     municipio_polygon = None
     geodata = None
     try:
-        geodata = await fetch_city_geodata(city)
+        # population se pasa para dimensionar el bbox sintético del núcleo
+        # cuando OSM solo tiene el centroide como nodo (caso Ferrol, Vigo, A Coruña).
+        geodata = await fetch_city_geodata(city, population=population)
         municipio_polygon = polygon_from_geojson(geodata.polygon_geojson)
         if municipio_polygon is None:
             LOGGER.info("Sin polígono Nominatim para %s — sin filtrado fino", city)
@@ -628,6 +712,12 @@ async def _process_city_with_pool(
         except Exception as exc:  # noqa: BLE001
             LOGGER.error("No se pudieron construir sectores para %s: %s", city, exc)
             sectors = []
+        # grid_polygon: el mismo que se usó para construir el grid. Pasado a
+        # _process_sector para que las subdivisiones adaptativas re-filtren
+        # los hijos y no se "escapen" a zonas no urbanas.
+        grid_polygon = polygon_from_geojson(
+            geodata.grid_polygon_geojson or geodata.polygon_geojson
+        )
         if sectors:
             LOGGER.info(
                 "Procesando ciudad: %s | %d sectores | query='%s'",
@@ -640,6 +730,7 @@ async def _process_city_with_pool(
                     municipio_polygon=municipio_polygon,
                     checkpoint=checkpoint,
                     municipio_label=municipio_label,
+                    grid_polygon=grid_polygon,
                 )
                 for i, s in enumerate(sectors)
             ]
