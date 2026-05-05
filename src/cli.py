@@ -17,6 +17,7 @@ from src.geo.coords import coords_from_maps_url
 from src.geo.grid import Sector, build_sector_grid, filter_by_polygon
 from src.geo.nominatim import fetch_city_geodata
 from src.geo.polygon import point_in_polygon, polygon_from_geojson
+from src.pipeline.checkpoint import CheckpointStore, CityResumeState, sector_key
 from src.pipeline.csv_writer import StreamingCsvWriter
 from src.scraper.maps_detail import extract_business_record
 from src.scraper.maps_search import SearchResultRef, collect_result_refs, open_maps_and_search
@@ -73,6 +74,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--population", type=int, default=None,
         help="Población del --city (override). Si no se indica, se busca en el dataset; "
              "si tampoco, fallback a grid fino.",
+    )
+    parser.add_argument(
+        "--resume-checkpoint", type=str, default=None, dest="resume_checkpoint",
+        help="Path al fichero de checkpoint para reanudar un job colgado. "
+             "Si se indica, se conservará el CSV existente y se saltarán los "
+             "municipios/sectores ya completados.",
+    )
+    parser.add_argument(
+        "--dry-sector-limit", type=int, default=5, dest="dry_sector_limit",
+        help="Sectores consecutivos sin nuevos al CSV antes de abandonar el "
+             "resto del municipio (default: 5; 0 = desactivar).",
+    )
+    parser.add_argument(
+        "--no-growth-limit", type=int, default=12, dest="no_growth_limit",
+        help="Iteraciones de scroll sin crecimiento antes de la heurística de "
+             "fin de lista (default: 12).",
     )
     return parser
 
@@ -233,8 +250,14 @@ async def _process_sector(
     metrics: dict,
     municipio_origen: str = "",
     municipio_polygon=None,
-) -> None:
+    checkpoint: Optional[CheckpointStore] = None,
+    municipio_label: str = "",
+) -> int:
     """Procesa un sector geográfico: search → collect → extract → write CSV.
+
+    Devuelve el número de registros nuevos escritos al CSV durante este sector
+    (incluyendo descendientes si subdivide). Sirve a `_process_city_with_pool`
+    para detectar saturación del municipio.
 
     La subdivisión adaptativa ocurre FUERA del bloque try/finally para que el
     contexto Playwright se libere al pool ANTES de lanzar los sub-sectores.
@@ -243,9 +266,41 @@ async def _process_sector(
     """
     if csv_writer.is_full:
         LOGGER.debug("[%s] Cap global ya alcanzado, saltando sector", label)
-        return
+        return 0
+
+    # Reanudar: comprobar estado previo del sector
+    skey = sector_key(sector.lat, sector.lon, sector.cell_deg)
+    prev_state = checkpoint.sector_state(skey) if checkpoint else None
+    if prev_state == "leaf":
+        LOGGER.info(
+            "[%s] ⤳ Skip (resume): sector leaf ya completado @ %.5f, %.5f cell=%.4f°",
+            label, sector.lat, sector.lon, sector.cell_deg,
+        )
+        return 0
+    if prev_state == "subdivided":
+        LOGGER.info(
+            "[%s] ⤳ Skip búsqueda (resume): sector subdividido — descendiendo a hijos",
+            label,
+        )
+        if sector.cell_deg > MIN_CELL_DEG:
+            sub_sectors = _subdivide(sector)
+            sub_tasks = [
+                _process_sector(
+                    f"{label}.{i + 1}", sub, pool, query, csv_writer, args, metrics,
+                    municipio_origen=municipio_origen,
+                    municipio_polygon=municipio_polygon,
+                    checkpoint=checkpoint,
+                    municipio_label=municipio_label,
+                )
+                for i, sub in enumerate(sub_sectors)
+            ]
+            sub_results = await asyncio.gather(*sub_tasks)
+            return sum(sub_results)
+        return 0
+
     pooled: PooledContext = await pool.acquire()
     needs_subdivision = False
+    written_in_sector = 0
     try:
         LOGGER.info(
             "── Sector %s @ %.5f, %.5f zoom=%d (cell=%.4f°) ──",
@@ -266,6 +321,7 @@ async def _process_sector(
             slow_ms=args.slow_ms,
             max_results=0,
             polygon=municipio_polygon,
+            no_growth_limit=getattr(args, "no_growth_limit", 12),
         )
 
         discovered = len(result.refs)
@@ -277,6 +333,7 @@ async def _process_sector(
             metrics["discovered"], metrics["processed"], csv_writer.total_written, metrics["errors"],
         )
 
+        before_written = csv_writer.total_written
         await _process_refs(
             refs=result.refs,
             page=pooled.page,
@@ -290,20 +347,37 @@ async def _process_sector(
             municipio_polygon=municipio_polygon,
             search_category=args.category,
         )
+        written_in_sector = csv_writer.total_written - before_written
 
-        LOGGER.info("[%s] Sector completado: %d válidos en CSV", label, csv_writer.total_written)
+        LOGGER.info(
+            "[%s] Sector completado: %d nuevos al CSV (total: %d)",
+            label, written_in_sector, csv_writer.total_written,
+        )
         # Stats finales del sector
         LOGGER.info(
             "STATS discovered=%d processed=%d valid=%d errors=%d",
             metrics["discovered"], metrics["processed"], csv_writer.total_written, metrics["errors"],
         )
 
-        # No subdividir si paramos por densidad (Google ya está expandiendo fuera)
+        # Subdividir sólo si: adaptive ON, Google no confirmó fin, no hubo
+        # parada por densidad, Y este sector aportó algo nuevo. Si el sector
+        # no descubrió ningún negocio que ya no estuviera en el CSV, subdividir
+        # es trabajo perdido (los hijos van a redescubrir lo mismo).
         needs_subdivision = (
             args.adaptive_subdivision
             and not result.reached_end
             and not result.density_stop
+            and written_in_sector > 0
         )
+        if (
+            not needs_subdivision
+            and not result.reached_end
+            and not result.density_stop
+            and written_in_sector == 0
+        ):
+            LOGGER.info(
+                "[%s] ⤳ Sector estéril (0 nuevos al CSV) — no subdividir", label,
+            )
 
     except Exception as exc:  # noqa: BLE001
         LOGGER.error("[%s] Sector falló: %s", label, exc)
@@ -313,6 +387,7 @@ async def _process_sector(
         await pool.release(pooled)
 
     # ── Subdivisión adaptativa (fuera del try, contexto ya liberado) ───────
+    total_written = written_in_sector
     if needs_subdivision:
         if sector.cell_deg > MIN_CELL_DEG:
             sub_sectors = _subdivide(sector)
@@ -320,21 +395,107 @@ async def _process_sector(
                 "[%s] ↳ Subdividiendo en %d (cell %.4f° → %.4f°)",
                 label, len(sub_sectors), sector.cell_deg, sector.cell_deg / 2,
             )
+            # Marcar el padre como subdivided ANTES de gather para que un crash
+            # mid-children no obligue a re-buscar todo el sector en el resume.
+            if checkpoint and municipio_label:
+                await checkpoint.mark_sector_done(
+                    municipio_label, sector.lat, sector.lon, sector.cell_deg,
+                    mode="subdivided",
+                )
             sub_tasks = [
                 _process_sector(
                     f"{label}.{i + 1}", sub, pool, query, csv_writer, args, metrics,
                     municipio_origen=municipio_origen,
                     municipio_polygon=municipio_polygon,
+                    checkpoint=checkpoint,
+                    municipio_label=municipio_label,
                 )
                 for i, sub in enumerate(sub_sectors)
             ]
-            await asyncio.gather(*sub_tasks)
+            sub_results = await asyncio.gather(*sub_tasks)
+            total_written += sum(sub_results)
         else:
             LOGGER.warning(
                 "[%s] ⚠ Celda mínima (%.4f°) — puede haber resultados sin capturar",
                 label, sector.cell_deg,
             )
             metrics["heuristic_stops"] += 1
+            # Aún así marcamos el leaf como hecho — no merece la pena revisitarlo.
+            if checkpoint and municipio_label:
+                await checkpoint.mark_sector_done(
+                    municipio_label, sector.lat, sector.lon, sector.cell_deg,
+                    mode="leaf",
+                )
+    else:
+        # Sector terminado sin subdividir → leaf
+        if checkpoint and municipio_label:
+            await checkpoint.mark_sector_done(
+                municipio_label, sector.lat, sector.lon, sector.cell_deg,
+                mode="leaf",
+            )
+    return total_written
+
+
+async def _run_sectors_with_saturation(
+    sectors: list,
+    label_prefix: str,
+    pool: ContextPool,
+    query: str,
+    csv_writer: StreamingCsvWriter,
+    args: argparse.Namespace,
+    metrics: dict,
+    municipio_origen: str,
+    municipio_polygon,
+    checkpoint: Optional[CheckpointStore],
+    municipio_label: str,
+) -> int:
+    """Ejecuta una lista de sectores en lotes paralelos de tamaño `concurrency`,
+    aplicando early-stop si N sectores consecutivos no añaden nada al CSV.
+
+    Retorna el número total de registros nuevos escritos en este lote.
+    """
+    if not sectors:
+        return 0
+
+    batch_size = max(1, getattr(args, "concurrency", 1))
+    dry_limit = max(0, getattr(args, "dry_sector_limit", 5))
+    consecutive_dry = 0
+    total_written = 0
+    total = len(sectors)
+
+    i = 0
+    while i < total:
+        if csv_writer.is_full:
+            break
+        batch = sectors[i:i + batch_size]
+        tasks = [
+            _process_sector(
+                f"{label_prefix}|{i + j + 1}/{total}", s, pool, query,
+                csv_writer, args, metrics,
+                municipio_origen=municipio_origen,
+                municipio_polygon=municipio_polygon,
+                checkpoint=checkpoint,
+                municipio_label=municipio_label,
+            )
+            for j, s in enumerate(batch)
+        ]
+        results = await asyncio.gather(*tasks)
+        for r in results:
+            total_written += r
+            if r == 0:
+                consecutive_dry += 1
+            else:
+                consecutive_dry = 0
+        if dry_limit > 0 and consecutive_dry >= dry_limit:
+            remaining = total - (i + len(batch))
+            LOGGER.info(
+                "[%s] ✓ Municipio saturado: %d sectores consecutivos sin nuevos al CSV "
+                "— saltando %d sector(es) restante(s)",
+                label_prefix, consecutive_dry, max(0, remaining),
+            )
+            break
+        i += batch_size
+    return total_written
 
 
 async def _build_sectors_for_city(
@@ -404,6 +565,7 @@ async def _run_text_search(
             slow_ms=args.slow_ms,
             max_results=0,
             polygon=municipio_polygon,
+            no_growth_limit=getattr(args, "no_growth_limit", 12),
         )
         discovered = len(result.refs)
         metrics["discovered"] += discovered
@@ -441,6 +603,8 @@ async def _process_city_with_pool(
     metrics: dict,
     municipio_origen: str = "",
     population: Optional[int] = None,
+    checkpoint: Optional[CheckpointStore] = None,
+    resume_state: Optional[CityResumeState] = None,
 ) -> int:
     """Procesa una sola ciudad usando el pool/CSV ya inicializados.
 
@@ -449,6 +613,8 @@ async def _process_city_with_pool(
     `--search-mode`.
     """
     query = f"{args.category} en {city}"
+
+    municipio_label = city  # clave estable para checkpoint del municipio
 
     # Si --zones manual, comportamiento antiguo (bypass total)
     if args.zones:
@@ -459,15 +625,18 @@ async def _process_city_with_pool(
             return 0
         if not sectors:
             return 0
+        if checkpoint:
+            await checkpoint.start_municipio(municipio_label, population or 0)
         before = csv_writer.total_written
-        tasks = [
-            _process_sector(
-                f"{city}|{i + 1}/{len(sectors)}", s, pool, query, csv_writer, args, metrics,
-                municipio_origen=municipio_origen,
-            )
-            for i, s in enumerate(sectors)
-        ]
-        await asyncio.gather(*tasks)
+        await _run_sectors_with_saturation(
+            sectors=sectors,
+            label_prefix=city,
+            pool=pool, query=query, csv_writer=csv_writer, args=args, metrics=metrics,
+            municipio_origen=municipio_origen,
+            municipio_polygon=None,
+            checkpoint=checkpoint,
+            municipio_label=municipio_label,
+        )
         return csv_writer.total_written - before
 
     # Resolver población: parámetro explícito o lookup en dataset
@@ -495,18 +664,26 @@ async def _process_city_with_pool(
 
     before = csv_writer.total_written
 
+    if checkpoint:
+        await checkpoint.start_municipio(municipio_label, population or 0)
+
     # Fase texto
     if strategy["text"]:
-        await _run_text_search(
-            label=f"{city}|text",
-            query=query,
-            pool=pool,
-            csv_writer=csv_writer,
-            args=args,
-            metrics=metrics,
-            municipio_origen=municipio_origen,
-            municipio_polygon=municipio_polygon,
-        )
+        if resume_state and resume_state.text_done:
+            LOGGER.info("[%s|text] ⤳ Skip (resume): fase texto ya completada", city)
+        else:
+            await _run_text_search(
+                label=f"{city}|text",
+                query=query,
+                pool=pool,
+                csv_writer=csv_writer,
+                args=args,
+                metrics=metrics,
+                municipio_origen=municipio_origen,
+                municipio_polygon=municipio_polygon,
+            )
+            if checkpoint:
+                await checkpoint.mark_text_done(municipio_label)
 
     # Fase grid
     if strategy["grid"] is not None and geodata is not None and not csv_writer.is_full:
@@ -522,15 +699,16 @@ async def _process_city_with_pool(
                 "Procesando ciudad: %s | %d sectores | query='%s'",
                 city, len(sectors), query,
             )
-            tasks = [
-                _process_sector(
-                    f"{city}|{i + 1}/{len(sectors)}", s, pool, query, csv_writer, args, metrics,
-                    municipio_origen=municipio_origen,
-                    municipio_polygon=municipio_polygon,
-                )
-                for i, s in enumerate(sectors)
-            ]
-            await asyncio.gather(*tasks)
+            await _run_sectors_with_saturation(
+                sectors=sectors,
+                label_prefix=city,
+                pool=pool, query=query, csv_writer=csv_writer, args=args,
+                metrics=metrics,
+                municipio_origen=municipio_origen,
+                municipio_polygon=municipio_polygon,
+                checkpoint=checkpoint,
+                municipio_label=municipio_label,
+            )
         else:
             LOGGER.warning("Sin sectores para %s en fase grid", city)
     elif strategy["grid"] is not None and geodata is None:
@@ -550,12 +728,30 @@ async def _run(args: argparse.Namespace) -> None:
 
     start_ts = time.perf_counter()
 
+    # Reanudar (opcional)
+    checkpoint: Optional[CheckpointStore] = None
+    if args.resume_checkpoint:
+        from pathlib import Path as _Path
+        ckpt_path = _Path(args.resume_checkpoint)
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"Checkpoint no encontrado: {ckpt_path}")
+        checkpoint = CheckpointStore.load(ckpt_path)
+        LOGGER.info(
+            "▶ Reanudando job desde %s (municipios completados: %d, current: %s)",
+            ckpt_path, len(checkpoint.completed_municipios),
+            (checkpoint.get_resume_state(checkpoint._current.label).label
+             if checkpoint._current else "—"),
+        )
+
     # CSV compartido entre todas las ciudades (dedup global automático).
     # max_records: cap global. 0 = sin límite.
-    csv_writer = StreamingCsvWriter(args.output, max_records=args.max_results)
+    csv_writer = StreamingCsvWriter(
+        args.output, max_records=args.max_results, resume=checkpoint is not None,
+    )
     LOGGER.info(
-        "CSV: %s (cap=%s)",
+        "CSV: %s (cap=%s)%s",
         args.output, args.max_results if args.max_results > 0 else "sin límite",
+        " [resume]" if checkpoint is not None else "",
     )
 
     metrics = {
@@ -572,18 +768,29 @@ async def _run(args: argparse.Namespace) -> None:
         if args.comunidad:
             from src.comunidad.runner import run_comunidad
 
-            async def process_city_fn(city_str: str, municipio_origen: str, poblacion: int) -> int:
+            async def process_city_fn(
+                city_str: str, municipio_origen: str, poblacion: int,
+                resume_state: Optional[CityResumeState] = None,
+            ) -> int:
                 return await _process_city_with_pool(
                     args, city_str, csv_writer, pool, metrics,
                     municipio_origen=municipio_origen, population=poblacion,
+                    checkpoint=checkpoint, resume_state=resume_state,
                 )
 
             await run_comunidad(
                 args.comunidad, args.min_poblacion, process_city_fn,
                 is_full=lambda: csv_writer.is_full,
+                checkpoint=checkpoint,
             )
         else:
-            await _process_city_with_pool(args, args.city, csv_writer, pool, metrics)
+            resume_state = None
+            if checkpoint:
+                resume_state = checkpoint.get_resume_state(args.city)
+            await _process_city_with_pool(
+                args, args.city, csv_writer, pool, metrics,
+                checkpoint=checkpoint, resume_state=resume_state,
+            )
     finally:
         await browser.close()
         await pw.stop()

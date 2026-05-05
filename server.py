@@ -42,6 +42,33 @@ def _make_output_path(city: str, category: str) -> str:
     return f"out/{_slugify(city)}_{_slugify(category)}_{ts}.csv"
 
 
+def _checkpoint_path(job_id: str) -> Path:
+    return BASE_DIR / "out" / f"{job_id}.checkpoint.json"
+
+
+def _build_cli_command(args: dict, output: str, resume_checkpoint: Optional[str] = None) -> list:
+    """Reconstruye la línea de comandos para `python -m src.cli` desde un dict de args."""
+    cmd = [
+        sys.executable, "-u", "-m", "src.cli",
+        "--category", str(args.get("category", "")),
+        "--output", output,
+        "--headless", str(args.get("headless", "true")),
+        "--max-results", str(args.get("max_results", 0)),
+        "--slow-ms", str(args.get("slow_ms", 250)),
+        "--timeout-ms", str(args.get("timeout_ms", 15000)),
+        "--concurrency", str(args.get("concurrency", 3)),
+        "--adaptive-subdivision", str(args.get("adaptive_subdivision", "true")),
+    ]
+    if args.get("comunidad"):
+        cmd += ["--comunidad", str(args["comunidad"]),
+                "--min-poblacion", str(args.get("min_poblacion", 5000))]
+    elif args.get("city"):
+        cmd += ["--city", str(args["city"])]
+    if resume_checkpoint:
+        cmd += ["--resume-checkpoint", resume_checkpoint]
+    return cmd
+
+
 # job_id -> {"lines": [...], "status": "running"|"done"|"error"|"stopped", "output": str, "proc": Process|None}
 jobs: dict[str, dict] = {}
 
@@ -65,6 +92,7 @@ def _load_history() -> None:
                 "status": entry.get("status", "done"),
                 "valid_count": entry.get("valid_count", 0),
                 "output": entry.get("output", ""),
+                "args": entry.get("args", {}),
                 "lines": [],
                 "proc": None,
             }
@@ -84,6 +112,7 @@ def _save_history() -> None:
             "status": j["status"],
             "valid_count": j.get("valid_count", 0),
             "output": j.get("output", ""),
+            "args": j.get("args", {}),
         }
         for jid, j in jobs.items()
         if j.get("started_at")
@@ -236,6 +265,18 @@ async def run_scraper(
     job_id = str(uuid.uuid4())
     label_for_output = comunidad if comunidad else city
     output = _make_output_path(label_for_output, category)
+    args_dict = {
+        "city": city or "",
+        "comunidad": comunidad or "",
+        "category": category,
+        "headless": headless,
+        "max_results": max_results,
+        "slow_ms": slow_ms,
+        "timeout_ms": timeout_ms,
+        "concurrency": concurrency,
+        "adaptive_subdivision": adaptive_subdivision,
+        "min_poblacion": min_poblacion,
+    }
     jobs[job_id] = {
         "city": comunidad if comunidad else city,
         "category": category,
@@ -243,57 +284,55 @@ async def run_scraper(
         "status": "running",
         "valid_count": 0,
         "output": output,
+        "args": args_dict,
         "lines": [],
         "proc": None,
     }
 
-    cmd = [
-        sys.executable, "-u", "-m", "src.cli",
-        "--category", category,
-        "--output", output,
-        "--headless", headless,
-        "--max-results", str(max_results),
-        "--slow-ms", str(slow_ms),
-        "--timeout-ms", str(timeout_ms),
-        "--concurrency", str(concurrency),
-        "--adaptive-subdivision", adaptive_subdivision,
-    ]
-    if comunidad:
-        cmd += ["--comunidad", comunidad, "--min-poblacion", str(min_poblacion)]
-    else:
-        cmd += ["--city", city]
+    # Crear checkpoint inicial — disponible aunque el proceso muera antes del primer flush
+    ckpt_path = _checkpoint_path(job_id)
+    try:
+        from src.pipeline.checkpoint import CheckpointStore
+        CheckpointStore.create(ckpt_path, args_dict, output, job_id=job_id)
+    except Exception as exc:  # noqa: BLE001
+        # No es fatal — el job puede correr sin checkpoint, simplemente no se podrá reanudar.
+        print(f"WARN: no se pudo crear checkpoint inicial: {exc}", file=sys.stderr)
 
-    async def run() -> None:
-        # start_new_session=True crea un process group propio (PGID == PID).
-        # Esto permite matar TODO el árbol (Python + Playwright driver + Chromium
-        # + helpers) con os.killpg() desde /stop, sin dejar huérfanos.
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=str(BASE_DIR),
-            start_new_session=True,
-        )
-        jobs[job_id]["proc"] = proc
-        assert proc.stdout is not None
-        async for raw_line in proc.stdout:
-            line = raw_line.decode("utf-8", errors="replace").rstrip()
-            jobs[job_id]["lines"].append(line)
-            m = re.search(r"valid=(\d+)", line)
-            if m:
-                jobs[job_id]["valid_count"] = int(m.group(1))
-        await proc.wait()
-        if jobs[job_id]["status"] != "stopped":
-            if proc.returncode == 0:
-                jobs[job_id]["status"] = "done"
-            elif jobs[job_id].get("valid_count", 0) > 0:
-                jobs[job_id]["status"] = "partial"
-            else:
-                jobs[job_id]["status"] = "error"
-        _save_history()
+    cmd = _build_cli_command(args_dict, output, resume_checkpoint=str(ckpt_path))
 
-    asyncio.create_task(run())
+    asyncio.create_task(_run_subprocess(job_id, cmd))
     return {"job_id": job_id, "output": output}
+
+
+async def _run_subprocess(job_id: str, cmd: list) -> None:
+    """Lanza el subproceso del CLI, captura logs SSE y actualiza estado del job."""
+    # start_new_session=True crea un process group propio (PGID == PID).
+    # Esto permite matar TODO el árbol (Python + Playwright driver + Chromium
+    # + helpers) con os.killpg() desde /stop, sin dejar huérfanos.
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=str(BASE_DIR),
+        start_new_session=True,
+    )
+    jobs[job_id]["proc"] = proc
+    assert proc.stdout is not None
+    async for raw_line in proc.stdout:
+        line = raw_line.decode("utf-8", errors="replace").rstrip()
+        jobs[job_id]["lines"].append(line)
+        m = re.search(r"valid=(\d+)", line)
+        if m:
+            jobs[job_id]["valid_count"] = int(m.group(1))
+    await proc.wait()
+    if jobs[job_id]["status"] != "stopped":
+        if proc.returncode == 0:
+            jobs[job_id]["status"] = "done"
+        elif jobs[job_id].get("valid_count", 0) > 0:
+            jobs[job_id]["status"] = "partial"
+        else:
+            jobs[job_id]["status"] = "error"
+    _save_history()
 
 
 @app.get("/stream/{job_id}")
@@ -365,8 +404,17 @@ async def _force_kill_after(proc: asyncio.subprocess.Process, pgid: int, delay: 
 
 @app.get("/history")
 async def history() -> list:
-    return [
-        {
+    out_list = []
+    for jid, j in reversed(list(jobs.items())):
+        if not j.get("started_at"):
+            continue
+        ckpt = _checkpoint_path(jid)
+        csv_exists = (BASE_DIR / j.get("output", "")).exists() if j.get("output") else False
+        resumable = (
+            j["status"] in {"partial", "stopped", "error"}
+            and ckpt.exists() and csv_exists and bool(j.get("args"))
+        )
+        out_list.append({
             "job_id": jid,
             "city": j.get("city", ""),
             "category": j.get("category", ""),
@@ -374,10 +422,40 @@ async def history() -> list:
             "status": j["status"],
             "valid_count": j.get("valid_count", 0),
             "output": j.get("output", ""),
-        }
-        for jid, j in reversed(list(jobs.items()))
-        if j.get("started_at")
-    ]
+            "checkpoint_available": resumable,
+        })
+    return out_list
+
+
+@app.post("/resume/{job_id}")
+async def resume_job(job_id: str) -> dict:
+    """Reanuda un job en estado partial/stopped/error desde su checkpoint."""
+    job = jobs.get(job_id)
+    if not job:
+        return {"error": "job not found"}
+    if job["status"] == "running":
+        return {"error": "job ya está en ejecución"}
+    if job["status"] not in {"partial", "stopped", "error"}:
+        return {"error": f"job en estado no reanudable: {job['status']}"}
+
+    ckpt_path = _checkpoint_path(job_id)
+    if not ckpt_path.exists():
+        return {"error": "checkpoint no encontrado — este job no es reanudable"}
+    output = job.get("output", "")
+    if not output or not (BASE_DIR / output).exists():
+        return {"error": "CSV de salida no encontrado"}
+    args_dict = job.get("args") or {}
+    if not args_dict:
+        return {"error": "args originales no persistidos — no se puede reconstruir el comando"}
+
+    # Resetear estado de ejecución (conservar valid_count previo y output).
+    job["status"] = "running"
+    job["proc"] = None
+    job["lines"].append(f"── Reanudando desde checkpoint: {ckpt_path.name} ──")
+
+    cmd = _build_cli_command(args_dict, output, resume_checkpoint=str(ckpt_path))
+    asyncio.create_task(_run_subprocess(job_id, cmd))
+    return {"job_id": job_id, "output": output, "resumed": True}
 
 
 @app.post("/open-folder/{job_id}")

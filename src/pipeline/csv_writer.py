@@ -29,7 +29,7 @@ class StreamingCsvWriter:
     - Llama a gc.collect() cada 20 sectores para mantener la RAM estable.
     """
 
-    def __init__(self, path: str, max_records: int = 0) -> None:
+    def __init__(self, path: str, max_records: int = 0, resume: bool = False) -> None:
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
@@ -38,10 +38,47 @@ class StreamingCsvWriter:
         self._total_written = 0
         self._max_records = int(max_records or 0)
 
-        # Escribir cabecera al inicio
-        with self._path.open("w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=FIELDNAMES)
-            writer.writeheader()
+        if resume and self._path.exists():
+            # Modo reanudar: NO sobrescribir el CSV existente; rehidratar dedup desde disco.
+            self._rehydrate_from_csv()
+        else:
+            # Escribir cabecera al inicio
+            with self._path.open("w", newline="", encoding="utf-8") as fh:
+                writer = csv.DictWriter(fh, fieldnames=FIELDNAMES)
+                writer.writeheader()
+
+    def _rehydrate_from_csv(self) -> None:
+        """Lee el CSV existente y popula `_seen` + `_total_written` para evitar
+        duplicados al reanudar. Reutiliza las claves de dedup canónicas."""
+        from src.domain import BusinessRecord
+
+        count = 0
+        with self._path.open("r", newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            for row in reader:
+                # Construir un BusinessRecord parcial sólo para reusar make_fallback_key
+                # (que usa nombre/direccion/telefono normalizados).
+                rec = BusinessRecord(
+                    nombre=row.get("nombre", ""),
+                    telefono=row.get("telefono", ""),
+                    direccion=row.get("direccion", ""),
+                    web=row.get("web", ""),
+                    rating=row.get("rating", ""),
+                    categoria=row.get("categoria", ""),
+                    source_query=row.get("source_query", ""),
+                    retrieved_at_utc=row.get("retrieved_at_utc", ""),
+                    maps_url=row.get("maps_url", ""),
+                    municipio_origen=row.get("municipio_origen", ""),
+                )
+                if rec.maps_url:
+                    self._seen.add(f"url:{normalize_maps_url(rec.maps_url)}")
+                self._seen.add(f"fallback:{make_fallback_key(rec)}")
+                count += 1
+        self._total_written = count
+        LOGGER.info(
+            "CSV rehidratado desde %s: %d registros existentes (dedup activo)",
+            self._path, count,
+        )
 
     async def write_sector(self, records: List[BusinessRecord]) -> int:
         """

@@ -45,10 +45,12 @@ CONSENT_BUTTONS = [
     'button:has-text("Accept all")',
     'button:has-text("Reject all")',
 ]
+# Fragmentos invariantes del mensaje "fin de lista" en distintos idiomas.
+# Sin "Has"/"You've" iniciales ni puntuación final → robusto frente a variantes
+# (con/sin punto, mayúsculas, prefijos cambiantes de Google).
 END_OF_LIST_TEXTS = [
-    "Has llegado al final de la lista",
-    "You've reached the end of the list",
-    "You have reached the end of the list",
+    "llegado al final de la lista",   # ES
+    "reached the end of the list",    # EN
 ]
 
 
@@ -77,10 +79,14 @@ async def _find_search_input(page: Page):
 
 
 async def _has_reached_end(page: Page) -> bool:
-    """Comprueba si Google Maps ha mostrado el mensaje de fin de lista."""
+    """Comprueba si Google Maps ha mostrado el mensaje de fin de lista.
+
+    Usa `:has-text` (substring) en lugar de `text=` (match exacto) para tolerar
+    variantes con/sin puntuación final, prefijos como "Has" / "You've", etc.
+    """
     for text in END_OF_LIST_TEXTS:
         try:
-            loc = page.locator(f'text="{text}"')
+            loc = page.locator(f':text-matches("{text}", "i")')
             if await loc.count() > 0:
                 return True
         except Exception:  # noqa: BLE001

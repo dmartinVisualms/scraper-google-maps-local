@@ -465,15 +465,70 @@
         : `<button disabled title="Sin resultados para analizar"
             style="background:none; border:none; font-size:1.1rem; padding:0 0.3rem; opacity:0.3; cursor:not-allowed;">🔍</button>`;
 
+      const resumeBtn = entry.checkpoint_available
+        ? `<button onclick="event.stopPropagation(); resumeJob('${entry.job_id}')"
+            title="Reanudar desde el último punto guardado"
+            style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:0 0.3rem; opacity:0.8; color:#60a5fa"
+            onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">▶</button>`
+        : '';
+
       tr.innerHTML = `
         <td style="padding:0.45rem 0.5rem; color:#64748b">${formatTime(entry.started_at)}</td>
         <td style="padding:0.45rem 0.5rem">${entry.city}</td>
         <td style="padding:0.45rem 0.5rem">${entry.category}</td>
         <td class="status-cell" style="padding:0.45rem 0.5rem">${STATUS_LABELS[entry.status] || entry.status}</td>
         <td class="valid-cell" style="padding:0.45rem 0.5rem; text-align:right; color:#f8fafc; font-weight:600">${entry.valid_count ?? '—'}</td>
-        <td style="padding:0.45rem 0.5rem; text-align:center; white-space:nowrap">${folderBtn}${analyzeBtn}</td>
+        <td style="padding:0.45rem 0.5rem; text-align:center; white-space:nowrap">${resumeBtn}${folderBtn}${analyzeBtn}</td>
       `;
       return tr;
+    }
+
+    async function resumeJob(jobId) {
+      if (es) { es.close(); es = null; }
+      btnRun.disabled = true;
+      btnDl.style.display = 'none';
+      setStatus('running');
+      resetStats();
+
+      const res = await fetch(`/resume/${jobId}`, { method: 'POST' });
+      const data = await res.json();
+      if (data.error) {
+        appendLine(`[error reanudando: ${data.error}]`);
+        setStatus('error');
+        btnRun.disabled = false;
+        return;
+      }
+      currentJobId = jobId;
+
+      // Marcar la fila correspondiente del historial como current y running
+      const row = historyBody.querySelector(`tr[data-job-id="${jobId}"]`);
+      if (row) {
+        currentHistoryRow = row;
+        const statusCell = row.querySelector('.status-cell');
+        if (statusCell) statusCell.innerHTML = STATUS_LABELS['running'];
+      }
+
+      es = new EventSource(`/stream/${jobId}`);
+      es.onmessage = (ev) => appendLine(ev.data);
+      es.addEventListener('done', (ev) => {
+        es.close();
+        const status = ev.data;
+        setStatus(status);
+        updateCurrentHistoryRow(statValid.textContent, status);
+        btnRun.disabled = false;
+        if (status === 'done' || status === 'stopped' || status === 'partial') {
+          btnDl.style.display = 'inline-block';
+          btnDl.onclick = () => { window.location = `/download/${jobId}`; };
+        }
+        loadHistory();  // refrescar checkpoint_available
+      });
+      es.onerror = () => {
+        if (es.readyState === EventSource.CLOSED) return;
+        appendLine('[error de conexión con el servidor]');
+        es.close();
+        btnRun.disabled = false;
+        setStatus('error');
+      };
     }
 
     async function loadHistory() {
