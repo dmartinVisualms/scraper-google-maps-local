@@ -472,15 +472,38 @@
             onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">▶</button>`
         : '';
 
+      const deleteBtn = entry.status === 'running'
+        ? `<button disabled title="No se puede borrar un job en ejecución"
+            style="background:none; border:none; font-size:1.1rem; padding:0 0.3rem; opacity:0.3; cursor:not-allowed;">🗑️</button>`
+        : `<button onclick="event.stopPropagation(); deleteHistoryEntry('${entry.job_id}')"
+            title="Eliminar del historial (borra CSV y checkpoint)"
+            style="background:none; border:none; cursor:pointer; font-size:1.1rem; padding:0 0.3rem; opacity:0.8;"
+            onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">🗑️</button>`;
+
       tr.innerHTML = `
         <td style="padding:0.45rem 0.5rem; color:#64748b">${formatTime(entry.started_at)}</td>
         <td style="padding:0.45rem 0.5rem">${entry.city}</td>
         <td style="padding:0.45rem 0.5rem">${entry.category}</td>
         <td class="status-cell" style="padding:0.45rem 0.5rem">${STATUS_LABELS[entry.status] || entry.status}</td>
         <td class="valid-cell" style="padding:0.45rem 0.5rem; text-align:right; color:#f8fafc; font-weight:600">${entry.valid_count ?? '—'}</td>
-        <td style="padding:0.45rem 0.5rem; text-align:center; white-space:nowrap">${resumeBtn}${folderBtn}${analyzeBtn}</td>
+        <td style="padding:0.45rem 0.5rem; text-align:center; white-space:nowrap">${resumeBtn}${folderBtn}${analyzeBtn}${deleteBtn}</td>
       `;
       return tr;
+    }
+
+    async function deleteHistoryEntry(jobId) {
+      if (!confirm('¿Eliminar esta ejecución del historial? Se borrará también el CSV y el checkpoint asociados.')) return;
+      const res = await fetch(`/history/${jobId}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (data.error) {
+        alert(`Error: ${data.error}`);
+        return;
+      }
+      // Si era la fila actual, limpiar referencia
+      if (currentHistoryRow && currentHistoryRow.dataset.jobId === jobId) {
+        currentHistoryRow = null;
+      }
+      loadHistory();
     }
 
     async function resumeJob(jobId) {

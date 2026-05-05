@@ -82,11 +82,6 @@ def build_parser() -> argparse.ArgumentParser:
              "municipios/sectores ya completados.",
     )
     parser.add_argument(
-        "--dry-sector-limit", type=int, default=5, dest="dry_sector_limit",
-        help="Sectores consecutivos sin nuevos al CSV antes de abandonar el "
-             "resto del municipio (default: 5; 0 = desactivar).",
-    )
-    parser.add_argument(
         "--no-growth-limit", type=int, default=12, dest="no_growth_limit",
         help="Iteraciones de scroll sin crecimiento antes de la heurística de "
              "fin de lista (default: 12).",
@@ -436,68 +431,6 @@ async def _process_sector(
     return total_written
 
 
-async def _run_sectors_with_saturation(
-    sectors: list,
-    label_prefix: str,
-    pool: ContextPool,
-    query: str,
-    csv_writer: StreamingCsvWriter,
-    args: argparse.Namespace,
-    metrics: dict,
-    municipio_origen: str,
-    municipio_polygon,
-    checkpoint: Optional[CheckpointStore],
-    municipio_label: str,
-) -> int:
-    """Ejecuta una lista de sectores en lotes paralelos de tamaño `concurrency`,
-    aplicando early-stop si N sectores consecutivos no añaden nada al CSV.
-
-    Retorna el número total de registros nuevos escritos en este lote.
-    """
-    if not sectors:
-        return 0
-
-    batch_size = max(1, getattr(args, "concurrency", 1))
-    dry_limit = max(0, getattr(args, "dry_sector_limit", 5))
-    consecutive_dry = 0
-    total_written = 0
-    total = len(sectors)
-
-    i = 0
-    while i < total:
-        if csv_writer.is_full:
-            break
-        batch = sectors[i:i + batch_size]
-        tasks = [
-            _process_sector(
-                f"{label_prefix}|{i + j + 1}/{total}", s, pool, query,
-                csv_writer, args, metrics,
-                municipio_origen=municipio_origen,
-                municipio_polygon=municipio_polygon,
-                checkpoint=checkpoint,
-                municipio_label=municipio_label,
-            )
-            for j, s in enumerate(batch)
-        ]
-        results = await asyncio.gather(*tasks)
-        for r in results:
-            total_written += r
-            if r == 0:
-                consecutive_dry += 1
-            else:
-                consecutive_dry = 0
-        if dry_limit > 0 and consecutive_dry >= dry_limit:
-            remaining = total - (i + len(batch))
-            LOGGER.info(
-                "[%s] ✓ Municipio saturado: %d sectores consecutivos sin nuevos al CSV "
-                "— saltando %d sector(es) restante(s)",
-                label_prefix, consecutive_dry, max(0, remaining),
-            )
-            break
-        i += batch_size
-    return total_written
-
-
 async def _build_sectors_for_city(
     args: argparse.Namespace,
     city: str,
@@ -628,15 +561,16 @@ async def _process_city_with_pool(
         if checkpoint:
             await checkpoint.start_municipio(municipio_label, population or 0)
         before = csv_writer.total_written
-        await _run_sectors_with_saturation(
-            sectors=sectors,
-            label_prefix=city,
-            pool=pool, query=query, csv_writer=csv_writer, args=args, metrics=metrics,
-            municipio_origen=municipio_origen,
-            municipio_polygon=None,
-            checkpoint=checkpoint,
-            municipio_label=municipio_label,
-        )
+        tasks = [
+            _process_sector(
+                f"{city}|{i + 1}/{len(sectors)}", s, pool, query, csv_writer, args, metrics,
+                municipio_origen=municipio_origen,
+                checkpoint=checkpoint,
+                municipio_label=municipio_label,
+            )
+            for i, s in enumerate(sectors)
+        ]
+        await asyncio.gather(*tasks)
         return csv_writer.total_written - before
 
     # Resolver población: parámetro explícito o lookup en dataset
@@ -699,16 +633,17 @@ async def _process_city_with_pool(
                 "Procesando ciudad: %s | %d sectores | query='%s'",
                 city, len(sectors), query,
             )
-            await _run_sectors_with_saturation(
-                sectors=sectors,
-                label_prefix=city,
-                pool=pool, query=query, csv_writer=csv_writer, args=args,
-                metrics=metrics,
-                municipio_origen=municipio_origen,
-                municipio_polygon=municipio_polygon,
-                checkpoint=checkpoint,
-                municipio_label=municipio_label,
-            )
+            tasks = [
+                _process_sector(
+                    f"{city}|{i + 1}/{len(sectors)}", s, pool, query, csv_writer, args, metrics,
+                    municipio_origen=municipio_origen,
+                    municipio_polygon=municipio_polygon,
+                    checkpoint=checkpoint,
+                    municipio_label=municipio_label,
+                )
+                for i, s in enumerate(sectors)
+            ]
+            await asyncio.gather(*tasks)
         else:
             LOGGER.warning("Sin sectores para %s en fase grid", city)
     elif strategy["grid"] is not None and geodata is None:

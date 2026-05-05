@@ -477,6 +477,37 @@ async def open_folder(job_id: str) -> dict:
         return {"error": str(exc)}
 
 
+@app.delete("/history/{job_id}")
+async def delete_history_entry(job_id: str) -> dict:
+    """Elimina un job del historial. Borra también su checkpoint y CSV asociados.
+
+    Si el job está en ejecución (`running`) se rechaza — primero hay que parar.
+    """
+    job = jobs.get(job_id)
+    if not job:
+        return {"error": "job not found"}
+    if job.get("status") == "running":
+        return {"error": "el job está en ejecución; deténlo antes de borrarlo"}
+
+    # Borrar artefactos del disco (best-effort)
+    csv_path = BASE_DIR / job.get("output", "") if job.get("output") else None
+    ckpt_path = _checkpoint_path(job_id)
+    xlsx_path = (
+        Path(str(csv_path).replace(".csv", ".xlsx")) if csv_path else None
+    )
+    for p in (csv_path, ckpt_path, xlsx_path):
+        if p and p.exists():
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+    jobs.pop(job_id, None)
+    analyze_jobs.pop(job_id, None)
+    _save_history()
+    return {"status": "ok", "deleted": job_id}
+
+
 @app.get("/download/{job_id}")
 async def download(job_id: str) -> FileResponse:
     job = jobs.get(job_id)

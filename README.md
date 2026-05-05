@@ -1,4 +1,4 @@
-# Google Maps Scraper `v0.9.2`
+# Google Maps Scraper `v0.9.3`
 
 Scraper de negocios de Google Maps con interfaz web integrada. Extrae nombre, teléfono, dirección, web, valoración y categoría de los resultados de búsqueda y los exporta a CSV.
 
