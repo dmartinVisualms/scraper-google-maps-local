@@ -12,6 +12,7 @@ from playwright.async_api import async_playwright
 
 from src.browser.pool import ContextPool, PooledContext
 from src.comunidad.dataset import get_poblacion_municipio
+from src.pipeline.category_filter import category_matches
 from src.geo.coords import coords_from_maps_url
 from src.geo.grid import Sector, build_sector_grid, filter_by_polygon
 from src.geo.nominatim import fetch_city_geodata
@@ -111,6 +112,7 @@ async def _process_refs(
     metrics: dict,
     municipio_origen: str = "",
     municipio_polygon=None,
+    search_category: str = "",
 ) -> None:
     """Procesa una lista de refs escribiendo cada registro al CSV inmediatamente.
     Actualiza metrics en tiempo real y emite STATS cada 10 registros.
@@ -171,6 +173,16 @@ async def _process_refs(
                             sector_label, record.nombre, blat, blon,
                         )
                         continue
+
+            # Filtrado por categoría: descartar negocios cuya categoría
+            # de Google Maps no corresponde con el término de búsqueda.
+            if search_category and not category_matches(search_category, record.categoria):
+                metrics["filtered_out_of_category"] += 1
+                LOGGER.debug(
+                    "[%s] Filtrado por categoría: '%s' → categoria='%s'",
+                    sector_label, record.nombre, record.categoria,
+                )
+                continue
 
             if municipio_origen:
                 record.municipio_origen = municipio_origen
@@ -276,6 +288,7 @@ async def _process_sector(
             metrics=metrics,
             municipio_origen=municipio_origen,
             municipio_polygon=municipio_polygon,
+            search_category=args.category,
         )
 
         LOGGER.info("[%s] Sector completado: %d válidos en CSV", label, csv_writer.total_written)
@@ -410,6 +423,7 @@ async def _run_text_search(
             metrics=metrics,
             municipio_origen=municipio_origen,
             municipio_polygon=municipio_polygon,
+            search_category=args.category,
         )
         LOGGER.info("[%s] Búsqueda textual completada: %d válidos en CSV", label, csv_writer.total_written)
     except Exception as exc:  # noqa: BLE001
@@ -547,6 +561,7 @@ async def _run(args: argparse.Namespace) -> None:
     metrics = {
         "discovered": 0, "processed": 0, "errors": 0,
         "heuristic_stops": 0, "filtered_out_of_polygon": 0,
+        "filtered_out_of_category": 0,
     }
 
     pw = await async_playwright().start()
@@ -576,12 +591,14 @@ async def _run(args: argparse.Namespace) -> None:
     elapsed = time.perf_counter() - start_ts
     LOGGER.info("── Resumen final ──")
     LOGGER.info(
-        "discover=%d processed=%d valid=%d duplicates=%d filtered_polygon=%d errors=%d elapsed_s=%.2f",
+        "discover=%d processed=%d valid=%d duplicates=%d "
+        "filtered_polygon=%d filtered_category=%d errors=%d elapsed_s=%.2f",
         metrics["discovered"],
         metrics["processed"],
         csv_writer.total_written,
         metrics["processed"] - csv_writer.total_written,
         metrics["filtered_out_of_polygon"],
+        metrics["filtered_out_of_category"],
         metrics["errors"],
         elapsed,
     )
@@ -589,6 +606,11 @@ async def _run(args: argparse.Namespace) -> None:
         LOGGER.info(
             "↳ %d registro(s) filtrados por estar fuera del polígono del municipio",
             metrics["filtered_out_of_polygon"],
+        )
+    if metrics["filtered_out_of_category"] > 0:
+        LOGGER.info(
+            "↳ %d registro(s) filtrados por categoría no coincidente con '%s'",
+            metrics["filtered_out_of_category"], args.category,
         )
     if metrics["heuristic_stops"] > 0:
         LOGGER.warning(
