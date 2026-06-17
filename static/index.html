@@ -191,7 +191,7 @@
   </style>
 </head>
 <body>
-  <h1>Google Maps Scraper <span style="font-size:0.55em; color:#64748b; font-weight:500; vertical-align:middle;">v0.9.2</span></h1>
+  <h1>Google Maps Scraper <span style="font-size:0.55em; color:#64748b; font-weight:500; vertical-align:middle;">v0.9.3</span></h1>
 
   <div class="card">
     <form id="form">
@@ -215,7 +215,7 @@
             <option value="">— Buscar por ciudad —</option>
           </select>
         </label>
-        <label>
+        <label id="label-min-pob">
           Población mínima municipio
           <input type="number" name="min_poblacion" id="min_poblacion" value="5000" min="0" step="1000" disabled />
         </label>
@@ -376,6 +376,8 @@
 
     function applyComunidadMode() {
       const isComunidad = comunidadSel.value !== '';
+      // "Población mínima" solo aplica en modo comunidad (ambos motores) -> ocultar en modo ciudad
+      document.getElementById('label-min-pob').style.display = isComunidad ? '' : 'none';
       minPobInput.disabled = !isComunidad;
       cityInput.disabled   = isComunidad;
       cityInput.required   = !isComunidad;
@@ -389,6 +391,7 @@
     }
 
     comunidadSel.addEventListener('change', applyComunidadMode);
+    applyComunidadMode();  // estado inicial (modo ciudad por defecto -> oculta población mínima)
 
     // ── Selector de motor (scraper / api) ──
     const engineSel = document.getElementById('engine');
