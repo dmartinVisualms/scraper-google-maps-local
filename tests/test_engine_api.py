@@ -139,6 +139,14 @@ def test_server_cmd_includes_api_flags():
     assert "--included-type" in cmd and "shoe_store" in cmd
 
 
+def test_guess_type_from_category():
+    from src.engine_api.category_types import guess_type
+    assert guess_type("zapaterías") == "shoe_store"
+    assert guess_type("Tiendas de ropa") == "clothing_store"
+    assert guess_type("restaurantes") == "restaurant"
+    assert guess_type("cosa rara sin tipo") is None
+
+
 def test_resolve_api_key_env_wins_then_local_file(tmp_path, monkeypatch):
     from src.engine_api import secrets
 

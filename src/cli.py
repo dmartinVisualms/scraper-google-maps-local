@@ -351,6 +351,7 @@ async def _run(args: argparse.Namespace) -> None:
     # Motor API: ruta propia (sin Playwright/grid). Convergente en el mismo CSV.
     if args.engine == "api":
         from src.engine_api.engine import run_api_engine
+        from src.engine_api.category_types import guess_type
         if args.comunidad:
             from src.comunidad.dataset import load_municipios
             municipios = load_municipios(args.comunidad, args.min_poblacion)
@@ -360,9 +361,15 @@ async def _run(args: argparse.Namespace) -> None:
             ]
         else:
             targets = [{"nombre": args.city, "location": args.city}]
+        # Tipo derivado de la categoría; --included-type lo sobreescribe (power users)
+        included_type = args.included_type or guess_type(args.category)
+        LOGGER.info(
+            "[API] tipo=%s (de categoría '%s')",
+            included_type or "ninguno (sin filtro estricto)", args.category,
+        )
         await run_api_engine(
             category=args.category, targets=targets, output=args.output,
-            included_type=args.included_type, max_results=args.max_results,
+            included_type=included_type, max_results=args.max_results,
         )
         return
 

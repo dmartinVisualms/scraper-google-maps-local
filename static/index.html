@@ -191,10 +191,22 @@
   </style>
 </head>
 <body>
-  <h1>Google Maps Scraper <span style="font-size:0.55em; color:#64748b; font-weight:500; vertical-align:middle;">v0.9.1</span></h1>
+  <h1>Google Maps Scraper <span style="font-size:0.55em; color:#64748b; font-weight:500; vertical-align:middle;">v0.9.2</span></h1>
 
   <div class="card">
     <form id="form">
+      <div class="section-title">Motor de extracción</div>
+      <div class="grid">
+        <label class="full">
+          Motor
+          <select name="engine" id="engine">
+            <option value="scraper" selected>Scraper (Playwright)</option>
+            <option value="api">API (Places API New)</option>
+          </select>
+          <small id="engine-hint" style="text-transform:none; font-weight:400; color:#4b5563; font-size:0.75rem; margin-bottom:0.6rem"></small>
+        </label>
+      </div>
+
       <div class="section-title">Búsqueda</div>
       <div class="grid">
         <label>
@@ -219,37 +231,26 @@
           Máx. resultados <small style="text-transform:none;font-size:0.7rem">(0 = todos)</small>
           <input type="number" name="max_results" value="0" min="0" />
         </label>
-        <label>
+        <label class="scraper-only">
           Headless
           <select name="headless">
             <option value="true" selected>Sí</option>
             <option value="false">No (visible)</option>
           </select>
         </label>
-        <label>
+        <label class="scraper-only">
           Delay scroll (ms)
           <input type="number" name="slow_ms" value="250" min="0" />
         </label>
-        <label>
+        <label class="scraper-only">
           Timeout página (ms)
           <input type="number" name="timeout_ms" value="15000" min="1000" />
         </label>
-        <label>
+        <label class="scraper-only">
           Concurrencia
           <input type="number" name="concurrency" value="3" min="1" max="10" />
         </label>
-        <label>
-          Motor
-          <select name="engine" id="engine">
-            <option value="scraper" selected>Scraper (Playwright)</option>
-            <option value="api">API (Places API New)</option>
-          </select>
-        </label>
-        <label id="label-included-type" style="display:none">
-          Tipo Google (API) <small style="text-transform:none;font-size:0.7rem">(p.ej. shoe_store)</small>
-          <input type="text" name="included_type" id="included_type" placeholder="vacío = sin filtro" />
-        </label>
-        <label class="full" style="flex-direction:row; align-items:center; gap:0.6rem; cursor:pointer;">
+        <label class="full scraper-only" style="flex-direction:row; align-items:center; gap:0.6rem; cursor:pointer;">
           <input type="checkbox" name="adaptive_subdivision" value="true" checked
                  style="width:auto; accent-color:#6366f1; width:1rem; height:1rem;" />
           <span>Subdivisión adaptativa</span>
@@ -391,13 +392,19 @@
 
     // ── Selector de motor (scraper / api) ──
     const engineSel = document.getElementById('engine');
-    const includedTypeLabel = document.getElementById('label-included-type');
     const apiPanel = document.getElementById('api-panel');
+    const engineHint = document.getElementById('engine-hint');
     function applyEngineMode() {
       const isApi = engineSel.value === 'api';
-      includedTypeLabel.style.display = isApi ? '' : 'none';
+      // Campos solo-scraper: ocultos en modo API
+      document.querySelectorAll('.scraper-only').forEach(el => {
+        el.style.display = isApi ? 'none' : '';
+      });
       apiPanel.classList.toggle('visible', isApi);   // siempre visible en modo API
       if (isApi) statsBar.classList.remove('visible');
+      engineHint.textContent = isApi
+        ? 'Rápido y preciso. El tipo de negocio se deriva de la CATEGORÍA. Coste/cuota en el panel inferior.'
+        : 'Navega Google Maps con Playwright (sin coste de API).';
     }
     engineSel.addEventListener('change', applyEngineMode);
     applyEngineMode();
