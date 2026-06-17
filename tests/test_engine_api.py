@@ -143,6 +143,8 @@ def test_guess_type_from_category():
     from src.engine_api.category_types import guess_type
     assert guess_type("zapaterías") == "shoe_store"
     assert guess_type("Tiendas de ropa") == "clothing_store"
+    assert guess_type("Tiendas de deportes") == "sporting_goods_store"
+    assert guess_type("Tiendas de niños") == "clothing_store"
     assert guess_type("restaurantes") == "restaurant"
     assert guess_type("cosa rara sin tipo") is None
 

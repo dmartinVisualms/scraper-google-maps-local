@@ -15,6 +15,8 @@ CATEGORY_TYPE_MAP = {
     "calzado": "shoe_store",
     "ropa": "clothing_store",
     "moda": "clothing_store",
+    "niñ": "clothing_store",          # ropa de niños/niñas
+    "deport": "sporting_goods_store",  # tiendas de deportes/deportivas
     "restaurant": "restaurant",
     "bar": "bar",
     "cafeter": "cafe",
@@ -46,6 +48,8 @@ def guess_type(category: str) -> Optional[str]:
 if __name__ == "__main__":  # ponytail: self-check
     assert guess_type("zapaterías") == "shoe_store"
     assert guess_type("Tiendas de ropa") == "clothing_store"
+    assert guess_type("Tiendas de deportes") == "sporting_goods_store"
+    assert guess_type("Tiendas de niños") == "clothing_store"
     assert guess_type("restaurantes") == "restaurant"
     assert guess_type("notariios raros") is None
     print("category_types self-check OK")
