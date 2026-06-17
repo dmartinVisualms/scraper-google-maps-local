@@ -25,6 +25,9 @@ def map_place(
     )
     rating = place.get("rating")
     rating_str = "" if rating is None else str(rating)
+    loc = place.get("location") or {}
+    lat = "" if loc.get("latitude") is None else str(loc["latitude"])
+    lon = "" if loc.get("longitude") is None else str(loc["longitude"])
     return BusinessRecord(
         nombre=_localized_text(place.get("displayName")),
         telefono=telefono,
@@ -36,4 +39,6 @@ def map_place(
         retrieved_at_utc=retrieved_at_utc,
         maps_url=place.get("googleMapsUri", "") or "",
         municipio_origen=municipio_origen,
+        lat=lat,
+        lon=lon,
     )

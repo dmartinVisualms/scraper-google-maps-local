@@ -17,6 +17,8 @@ FIELDNAMES = [
     "retrieved_at_utc",
     "maps_url",
     "municipio_origen",
+    "lat",
+    "lon",
 ]
 
 

@@ -41,6 +41,14 @@ def test_map_place_reads_localized_and_falls_back():
     assert rec.maps_url == "https://maps.google.com/?cid=7"
 
 
+def test_map_place_sets_lat_lon_from_location():
+    place = {"displayName": {"text": "X"}, "location": {"latitude": 43.56, "longitude": -7.25}}
+    rec = map_place(place, source_query="q", municipio_origen="Foz", retrieved_at_utc="t")
+    assert rec.lat == "43.56" and rec.lon == "-7.25"
+    rec2 = map_place({"displayName": {"text": "Y"}}, source_query="q", municipio_origen="Foz", retrieved_at_utc="t")
+    assert rec2.lat == "" and rec2.lon == ""
+
+
 # ── dedup (regresión del bug "?cid=" colapsado) ─────────────────────────────
 def test_dedup_keeps_distinct_cid_urls():
     from src.domain import BusinessRecord

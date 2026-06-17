@@ -15,6 +15,8 @@ class BusinessRecord:
     retrieved_at_utc: str
     maps_url: str
     municipio_origen: str = ""
+    lat: str = ""
+    lon: str = ""
 
     def to_dict(self) -> dict[str, str]:
         return asdict(self)

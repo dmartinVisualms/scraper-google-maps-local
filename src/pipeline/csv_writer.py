@@ -18,7 +18,7 @@ LOGGER = logging.getLogger(__name__)
 FIELDNAMES = [
     "nombre", "telefono", "direccion", "web", "rating",
     "categoria", "source_query", "retrieved_at_utc", "maps_url",
-    "municipio_origen",
+    "municipio_origen", "lat", "lon",
 ]
 
 

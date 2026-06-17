@@ -193,25 +193,43 @@ def test_normalize_brand_key():
     assert normalize_brand_key("Zapaterías 54") == "zapaterías"
 
 
-def test_count_stores_groups_by_brand_signature():
+def test_count_stores_groups_by_brand_minus_municipio():
+    # Cadena real: mismo nombre + municipio distinto -> agrupa quitando el municipio
     rows = [
-        {"nombre": "Lolitamoda Noia"},
-        {"nombre": "Lolitamoda Boiro"},
-        {"nombre": "Lolitamoda Ribeira"},
-        {"nombre": "Casais Noia"},
-        {"nombre": "Casais Ribeira"},
-        {"nombre": "Único Concept Store"},
+        {"nombre": "Lolitamoda Noia", "municipio_origen": "Noia"},
+        {"nombre": "Lolitamoda Boiro", "municipio_origen": "Boiro"},
+        {"nombre": "Lolitamoda Ribeira", "municipio_origen": "Ribeira"},
+        {"nombre": "Casais Noia", "municipio_origen": "Noia"},
+        {"nombre": "Casais Ribeira", "municipio_origen": "Ribeira"},
+        {"nombre": "Único Concept Store", "municipio_origen": "Vigo"},
     ]
     counts = count_stores_by_brand(rows)
     assert counts["lolitamoda"] == 3
     assert counts["casais"] == 2
-    assert counts["único"] == 1
+    assert counts["único concept store"] == 1
+
+
+def test_distinct_shops_not_merged_by_first_word():
+    # Regresión: antes 'calzados'/'calzado' colapsaban decenas de negocios en uno.
+    rows = [
+        {"nombre": "Calzados Raquel", "municipio_origen": "Lugo"},
+        {"nombre": "Calzados Mara", "municipio_origen": "Foz"},
+        {"nombre": "Calzado para Pies Especiales S.L.", "municipio_origen": "Vigo"},
+    ]
+    counts = count_stores_by_brand(rows)
+    assert counts["calzados raquel"] == 1
+    assert counts["calzados mara"] == 1
+    assert num_tiendas_for("Calzado para Pies Especiales S.L.", counts, "Vigo") == 1
 
 
 def test_num_tiendas_for_returns_count():
-    rows = [{"nombre": "Lolitamoda A"}, {"nombre": "Lolitamoda B"}, {"nombre": "Lolitamoda C"}]
+    rows = [
+        {"nombre": "Lolitamoda Noia", "municipio_origen": "Noia"},
+        {"nombre": "Lolitamoda Boiro", "municipio_origen": "Boiro"},
+        {"nombre": "Lolitamoda Ribeira", "municipio_origen": "Ribeira"},
+    ]
     counts = count_stores_by_brand(rows)
-    assert num_tiendas_for("Lolitamoda Otro Local", counts) == 3
+    assert num_tiendas_for("Lolitamoda Cee", counts, "Cee") == 3
 
 
 def test_num_tiendas_for_unknown_returns_one():

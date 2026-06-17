@@ -99,35 +99,40 @@ def normalize_brand_key(name: str) -> str:
     return s
 
 
-def _brand_signature(name: str) -> str:
-    """Firma de marca: primera palabra significativa (>=3 chars) del nombre normalizado.
-    Se evita usar palabras genéricas comunes como 'tienda', 'moda'."""
-    full = normalize_brand_key(name)
-    if not full:
+def _brand_key(name: str, municipio: str = "") -> str:
+    """Clave de marca: nombre normalizado COMPLETO quitando los tokens del municipio.
+
+    Así negocios distintos no colisionan ('Calzados Raquel' ≠ 'Calzados Mara'),
+    pero una misma cadena en varios municipios sí agrupa ('Lolitamoda Noia' y
+    'Lolitamoda Boiro' → 'lolitamoda'). Sustituye al antiguo criterio de
+    'primera palabra', que sobre-contaba (toda zapatería empezaba por 'calzado')."""
+    norm = normalize_brand_key(name)
+    if not norm:
         return ""
-    blocked = {"tienda", "tiendas", "moda", "modas", "boutique", "shop", "store", "the", "los", "las", "el", "la"}
-    for word in full.split():
-        if len(word) >= 3 and word not in blocked:
-            return word
-    # Fallback: primera palabra
-    return full.split()[0] if full else ""
+    muni_tokens = set(normalize_brand_key(municipio).split())
+    tokens = [w for w in norm.split() if w not in muni_tokens]
+    return " ".join(tokens) or norm
 
 
-def count_stores_by_brand(rows: List[Dict], name_field: str = "nombre") -> Dict[str, int]:
-    """Devuelve {firma_marca: nº de filas con esa firma}."""
+def count_stores_by_brand(
+    rows: List[Dict],
+    name_field: str = "nombre",
+    muni_field: str = "municipio_origen",
+) -> Dict[str, int]:
+    """Devuelve {clave_marca: nº de filas con esa clave}."""
     counts: Dict[str, int] = {}
     for r in rows:
-        sig = _brand_signature(r.get(name_field, ""))
-        if not sig:
+        key = _brand_key(r.get(name_field, ""), r.get(muni_field, "") or "")
+        if not key:
             continue
-        counts[sig] = counts.get(sig, 0) + 1
+        counts[key] = counts.get(key, 0) + 1
     return counts
 
 
-def num_tiendas_for(name: str, brand_counts: Dict[str, int]) -> int:
+def num_tiendas_for(name: str, brand_counts: Dict[str, int], municipio: str = "") -> int:
     """Devuelve cuántas tiendas tiene la marca de este negocio (mín 1)."""
-    sig = _brand_signature(name)
-    return brand_counts.get(sig, 1) if sig else 1
+    key = _brand_key(name, municipio)
+    return brand_counts.get(key, 1) if key else 1
 
 
 # ─── Scoring por criterio ───────────────────────────────────────────────

@@ -137,10 +137,18 @@ async def _run(args: argparse.Namespace) -> None:
                     metrics["stores"] += 1
 
         # ── Cálculo de scoring ──────────────────────────────────────────
-        lat, lon = coords_from_maps_url(row.get("maps_url", ""))
+        # Coords: preferir columnas lat/lon (motor API las persiste); si no, del maps_url (scraper)
+        lat, lon = None, None
+        if (row.get("lat") or "").strip() and (row.get("lon") or "").strip():
+            try:
+                lat, lon = float(row["lat"]), float(row["lon"])
+            except ValueError:
+                lat, lon = None, None
+        if lat is None:
+            lat, lon = coords_from_maps_url(row.get("maps_url", ""))
         municipio = (row.get("municipio_origen") or "").strip()
         poblacion = get_poblacion_municipio(municipio) if municipio else None
-        n_tiendas = num_tiendas_for(nombre, brand_counts)
+        n_tiendas = num_tiendas_for(nombre, brand_counts, municipio)
 
         if es_tienda == "Sí":
             madurez = "ecommerce_funcional"
