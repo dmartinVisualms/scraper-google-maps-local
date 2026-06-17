@@ -1,0 +1,10 @@
+{
+  "source": "https://developers.google.com/maps/billing-and-pricing/pricing",
+  "verified_on": "2026-06-08",
+  "currency": "USD",
+  "text_search": {
+    "essentials": { "sku": "635D-A9DD-C520", "free_per_month": 10000, "first_paid_band": null },
+    "pro":        { "sku": "4FDA-34B1-A910", "free_per_month": 5000,  "first_paid_band": { "from": 5001, "to": 100000, "rate_per_1000": 32.00 } },
+    "enterprise": { "sku": "E967-44BC-B44D", "free_per_month": 1000,  "first_paid_band": { "from": 1001, "to": 100000, "rate_per_1000": 35.00 } }
+  }
+}

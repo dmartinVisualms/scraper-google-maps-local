@@ -191,7 +191,7 @@
   </style>
 </head>
 <body>
-  <h1>Google Maps Scraper <span style="font-size:0.55em; color:#64748b; font-weight:500; vertical-align:middle;">v0.8.5</span></h1>
+  <h1>Google Maps Scraper <span style="font-size:0.55em; color:#64748b; font-weight:500; vertical-align:middle;">v0.9.0</span></h1>
 
   <div class="card">
     <form id="form">
@@ -238,6 +238,17 @@
           Concurrencia
           <input type="number" name="concurrency" value="3" min="1" max="10" />
         </label>
+        <label>
+          Motor
+          <select name="engine" id="engine">
+            <option value="scraper" selected>Scraper (Playwright)</option>
+            <option value="api">API (Places API New)</option>
+          </select>
+        </label>
+        <label id="label-included-type" style="display:none">
+          Tipo Google (API) <small style="text-transform:none;font-size:0.7rem">(p.ej. shoe_store)</small>
+          <input type="text" name="included_type" id="included_type" placeholder="vacío = sin filtro" />
+        </label>
         <label class="full" style="flex-direction:row; align-items:center; gap:0.6rem; cursor:pointer;">
           <input type="checkbox" name="adaptive_subdivision" value="true" checked
                  style="width:auto; accent-color:#6366f1; width:1rem; height:1rem;" />
@@ -274,6 +285,26 @@
       <div class="stat">
         <span class="stat-value" id="stat-errors">–</span>
         <span class="stat-label">Errores</span>
+      </div>
+    </div>
+
+    <!-- Panel de coste/cuota API (visible en modo API) -->
+    <div class="stats-bar" id="api-panel">
+      <div class="stat">
+        <span class="stat-value" id="api-run">–</span>
+        <span class="stat-label">Peticiones (run)</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="api-month">–</span>
+        <span class="stat-label">Peticiones (mes)</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="api-cost">–</span>
+        <span class="stat-label">Coste est. (mes)</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="api-quota">–</span>
+        <span class="stat-label">Cuota gratis (1.000/mes)</span>
       </div>
     </div>
 
@@ -358,6 +389,19 @@
 
     comunidadSel.addEventListener('change', applyComunidadMode);
 
+    // ── Selector de motor (scraper / api) ──
+    const engineSel = document.getElementById('engine');
+    const includedTypeLabel = document.getElementById('label-included-type');
+    const apiPanel = document.getElementById('api-panel');
+    function applyEngineMode() {
+      const isApi = engineSel.value === 'api';
+      includedTypeLabel.style.display = isApi ? '' : 'none';
+      apiPanel.classList.toggle('visible', isApi);   // siempre visible en modo API
+      if (isApi) statsBar.classList.remove('visible');
+    }
+    engineSel.addEventListener('change', applyEngineMode);
+    applyEngineMode();
+
     const historyCard = document.getElementById('history-card');
     const historyBody = document.getElementById('history-body');
     const isLocal = ['localhost', '127.0.0.1', ''].includes(window.location.hostname);
@@ -382,6 +426,19 @@
         statValid.textContent      = s[3];
         statErrors.textContent     = s[4];
         updateCurrentHistoryRow(s[3], null);
+        return;
+      }
+      // Modo API: "APISTATS run_requests=.. month_requests=.. free_cap=.. remaining=.. within_free=.. est_cost_usd=.."
+      const a = text.match(/APISTATS run_requests=(\d+)\s+month_requests=(\d+)\s+free_cap=(\d+)\s+remaining=(\d+)\s+within_free=(\w+)\s+est_cost_usd=([\d.]+)/);
+      if (a) {
+        document.getElementById('api-run').textContent   = a[1];
+        document.getElementById('api-month').textContent = `${a[2]} / ${a[3]}`;
+        document.getElementById('api-cost').textContent  = `$${a[6]}`;
+        const ok = a[5] === 'true';
+        const q = document.getElementById('api-quota');
+        q.textContent = ok ? `✓ ${a[4]} libres` : '✗ FUERA de cuota';
+        q.style.color = ok ? '#34d399' : '#f87171';
+        document.getElementById('api-panel').classList.add('visible');
         return;
       }
       // Resumen final: "discover=X processed=Y valid=Z ... errors=W"
@@ -419,7 +476,14 @@
 
     function resetStats() {
       [statDiscovered, statProcessed, statValid, statErrors].forEach(el => el.textContent = '–');
-      statsBar.classList.add('visible');
+      const isApi = document.getElementById('engine').value === 'api';
+      statsBar.classList.toggle('visible', !isApi);
+      if (isApi) {
+        ['api-run', 'api-month', 'api-cost', 'api-quota'].forEach(id => {
+          const el = document.getElementById(id); el.textContent = '–'; el.style.color = '';
+        });
+        document.getElementById('api-panel').classList.add('visible');
+      }
     }
 
     const STATUS_LABELS = {

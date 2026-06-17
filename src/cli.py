@@ -65,6 +65,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--resume-csv", type=str, default=None, dest="resume_csv",
         help="Reanuda usando un CSV existente: precarga dedup y, en modo comunidad, salta municipios ya presentes.",
     )
+    parser.add_argument(
+        "--engine", choices=["scraper", "api"], default="scraper",
+        help="Motor: scraper (Playwright, default) o api (Places API New, requiere GOOGLE_MAPS_API_KEY).",
+    )
+    parser.add_argument(
+        "--included-type", type=str, default=None, dest="included_type",
+        help="[api] Tipo Google estricto, p.ej. shoe_store. Vacío = sin filtro (más resultados, menos precisos).",
+    )
     return parser
 
 
@@ -339,6 +347,24 @@ async def _run(args: argparse.Namespace) -> None:
         raise ValueError("--comunidad y --zones son mutuamente excluyentes")
     if not args.comunidad and not args.city:
         raise ValueError("Debes indicar --city o --comunidad")
+
+    # Motor API: ruta propia (sin Playwright/grid). Convergente en el mismo CSV.
+    if args.engine == "api":
+        from src.engine_api.engine import run_api_engine
+        if args.comunidad:
+            from src.comunidad.dataset import load_municipios
+            municipios = load_municipios(args.comunidad, args.min_poblacion)
+            targets = [
+                {"nombre": m["nombre"], "location": f"{m['nombre']}, {m['provincia']}"}
+                for m in municipios
+            ]
+        else:
+            targets = [{"nombre": args.city, "location": args.city}]
+        await run_api_engine(
+            category=args.category, targets=targets, output=args.output,
+            included_type=args.included_type, max_results=args.max_results,
+        )
+        return
 
     start_ts = time.perf_counter()
 

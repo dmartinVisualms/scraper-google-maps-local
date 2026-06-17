@@ -289,6 +289,8 @@ async def run_scraper(
     adaptive_subdivision: str = Form("false"),
     comunidad: Optional[str] = Form(None),
     min_poblacion: int = Form(5000),
+    engine: str = Form("scraper"),
+    included_type: Optional[str] = Form(None),
 ) -> dict:
     comunidad = (comunidad or "").strip() or None
     city = (city or "").strip() or None
@@ -309,6 +311,8 @@ async def run_scraper(
         "concurrency": concurrency,
         "adaptive_subdivision": adaptive_subdivision,
         "min_poblacion": min_poblacion,
+        "engine": engine,
+        "included_type": (included_type or "").strip() or None,
     }
     jobs[job_id] = {
         "city": comunidad if comunidad else city,
@@ -348,6 +352,10 @@ def _build_scraper_cmd(
         ]
     elif params.get("city"):
         cmd += ["--city", params["city"]]
+    if params.get("engine") == "api":
+        cmd += ["--engine", "api"]
+        if params.get("included_type"):
+            cmd += ["--included-type", params["included_type"]]
     if resume_csv:
         cmd += ["--resume-csv", resume_csv]
     return cmd
