@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +16,7 @@ import aiohttp
 from src.engine_api import client as api_client
 from src.engine_api.cost import estimate_cost
 from src.engine_api.mapper import map_place
+from src.engine_api.secrets import resolve_api_key
 from src.engine_api.usage import record_and_report
 from src.pipeline.export_csv import export_csv
 
@@ -56,9 +56,12 @@ async def run_api_engine(
     """targets: [{"nombre": <etiqueta>, "location": <texto tras 'en'>}].
     Escribe el CSV y <output>_metrics.json; devuelve {metrics, quota, valid}.
     """
-    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "").strip()
+    api_key = resolve_api_key()
     if not api_key:
-        raise SystemExit("Define GOOGLE_MAPS_API_KEY en el entorno para el motor API.")
+        raise SystemExit(
+            "Falta la API key: exporta GOOGLE_MAPS_API_KEY o créala en el fichero .env "
+            "(GOOGLE_MAPS_API_KEY=...) en la raíz del proyecto."
+        )
 
     retrieved_at = _utc_now_iso()
     started = time.perf_counter()

@@ -139,6 +139,18 @@ def test_server_cmd_includes_api_flags():
     assert "--included-type" in cmd and "shoe_store" in cmd
 
 
+def test_resolve_api_key_env_wins_then_local_file(tmp_path, monkeypatch):
+    from src.engine_api import secrets
+
+    f = tmp_path / ".env"
+    f.write_text('GOOGLE_MAPS_API_KEY="fromfile"\n', encoding="utf-8")
+    monkeypatch.setattr(secrets, "_ENV_FILE", f)
+    monkeypatch.delenv("GOOGLE_MAPS_API_KEY", raising=False)
+    assert secrets.resolve_api_key() == "fromfile"          # fallback al .env
+    monkeypatch.setenv("GOOGLE_MAPS_API_KEY", "fromenv")
+    assert secrets.resolve_api_key() == "fromenv"           # el entorno gana
+
+
 def test_server_cmd_scraper_has_no_api_flags():
     import server
     cmd = server._build_scraper_cmd(

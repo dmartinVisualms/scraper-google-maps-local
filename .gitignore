@@ -7,3 +7,5 @@ out/
 .claude/
 docs/
 CLAUDE.md
+.env
+.env.*
