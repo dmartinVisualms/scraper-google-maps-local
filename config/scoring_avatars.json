@@ -1,41 +1,53 @@
 {
-  "_doc": "Definición de los 3 arquetipos de cliente comercial. Cada criterio especifica un rango [min, max]. encaje_parcial_si_cumple_n indica cuántos de los 4 criterios deben cumplirse para 'encaje parcial'.",
+  "_doc": "Definición de los 4 arquetipos de cliente comercial. Optimizado para capturar grandes cuentas, franquicias y agrupaciones. Cada criterio especifica un rango [min, max]. encaje_parcial_si_cumple_n indica cuántos criterios deben cumplirse para 'encaje parcial' (el criterio ecommerce solo se evalúa cuando ecommerce_requerido=true).",
   "avatares": [
     {
       "id": 1,
       "nombre": "El Señorío Comarcal",
-      "descripcion": "Micro-cadenas regionales que dominan cabeceras de comarca aisladas del gran retail. Modelo más resiliente y de mayor facturación. Ej: Lolitamoda (6 tiendas), Zapaterías 54, Casais, Don Zapato, Susuela.",
+      "descripcion": "Micro-cadenas regionales líderes en zonas aisladas del gran retail. Ideal para Velfix por control de stock multitienda. Sin requisito de ecommerce: muchas facturan millones en físico y aún no han dado el salto online. Ej: Lolitamoda (6 tiendas), Zapaterías 54, Casais, Don Zapato, Susuela.",
       "criterios": {
-        "poblacion_municipio": [15000, 40000],
-        "distancia_eci_km":    [45, 85],
-        "num_tiendas":         [3, 6],
+        "poblacion_municipio": [15000, 50000],
+        "distancia_eci_km":    [45, 90],
+        "num_tiendas":         [3, 7],
+        "ecommerce_requerido": false
+      },
+      "encaje_parcial_si_cumple_n": 3
+    },
+    {
+      "id": 2,
+      "nombre": "La Hegemonía Interior",
+      "descripcion": "Monopolistas premium en capitales de provincia de tamaño medio sin competencia masiva del ECI. Absorben toda la demanda de moda premium. Ej: Logue Más Marcas (Ourense), Sniker (Ourense), Diez Hombre y MurallaSport (Lugo), Código Denim (Lugo).",
+      "criterios": {
+        "poblacion_municipio": [55000, 130000],
+        "distancia_eci_km":    [85, 9999],
+        "num_tiendas":         [2, 6],
+        "ecommerce_requerido": false
+      },
+      "encaje_parcial_si_cumple_n": 3
+    },
+    {
+      "id": 3,
+      "nombre": "La Aguja Urbana",
+      "descripcion": "Concept stores y tiendas de nicho/streetwear hiperespecializadas en grandes urbes comerciales, dentro de la sombra del ECI (<15km). Sobreviven con identidad de marca radical en sneakers/streetwear/diseño. Ej: Five Sneaker Shop (A Coruña), Dulce Calvo (Santiago), Garysom (Santiago).",
+      "criterios": {
+        "poblacion_municipio": [200000, 99999999],
+        "distancia_eci_km":    [0, 15],
+        "num_tiendas":         [1, 2],
         "ecommerce_requerido": true
       },
       "encaje_parcial_si_cumple_n": 2
     },
     {
-      "id": 2,
-      "nombre": "La Hegemonía Interior",
-      "descripcion": "Monopolistas del gusto en capitales de provincia donde el gran retail no tiene presencia. Absorben toda la demanda de moda premium. Ej: Logue Más Marcas (Ourense), Sniker (Ourense), Diez Hombre y MurallaSport (Lugo), Código Denim (Lugo).",
+      "id": 4,
+      "nombre": "Nodos de Volumen / Redes",
+      "descripcion": "Centrales de compras, marcas con showrooms distribuidores, o sedes centrales de franquicias de moda. El volumen de tiendas (8+) es el criterio que define el encaje; población y distancia son cajón de sastre, por eso el encaje exige cumplir los 3 criterios.",
       "criterios": {
-        "poblacion_municipio": [60000, 110000],
-        "distancia_eci_km":    [90, 9999],
-        "num_tiendas":         [2, 5],
+        "poblacion_municipio": [0, 99999999],
+        "distancia_eci_km":    [0, 99999],
+        "num_tiendas":         [8, 999],
         "ecommerce_requerido": false
       },
-      "encaje_parcial_si_cumple_n": 2
-    },
-    {
-      "id": 3,
-      "nombre": "La Aguja Urbana",
-      "descripcion": "Concept stores de nicho en metrópolis dentro de la sombra del ECI (<15km). Sobreviven con identidad de marca radical en sneakers/streetwear/diseño. Ej: Five Sneaker Shop (A Coruña), Dulce Calvo (Santiago), Garysom (Santiago).",
-      "criterios": {
-        "poblacion_municipio": [200000, 99999999],
-        "distancia_eci_km":    [0, 15],
-        "num_tiendas":         [1, 2],
-        "ecommerce_requerido": false
-      },
-      "encaje_parcial_si_cumple_n": 2
+      "encaje_parcial_si_cumple_n": 3
     }
   ]
 }

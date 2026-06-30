@@ -86,13 +86,13 @@ def test_real_configs_load_smoke(real_weights, real_avatars, real_eci):
 
 def test_score_distancia_eci_optimo(real_weights):
     pts, etiqueta = score_distancia_eci(60, real_weights)
-    assert pts == 25
+    assert pts == 20
     assert "óptimo" in etiqueta
 
 
 def test_score_distancia_eci_sombra(real_weights):
     pts, _ = score_distancia_eci(15, real_weights)
-    assert pts == 5
+    assert pts == 10
 
 
 def test_score_distancia_eci_aislado(real_weights):
@@ -108,33 +108,36 @@ def test_score_poblacion_ideal(real_weights):
 
 def test_score_poblacion_rural(real_weights):
     pts, _ = score_poblacion(3000, real_weights)
-    assert pts == 5
+    assert pts == 3
 
 
 def test_score_poblacion_urbano(real_weights):
-    pts, _ = score_poblacion(300000, real_weights)
-    assert pts == 5
+    pts, etiqueta = score_poblacion(300000, real_weights)
+    assert pts == 10
+    assert "gran urbe" in etiqueta
 
 
 def test_score_num_tiendas(real_weights):
-    assert score_num_tiendas(4, real_weights)[0] == 25
+    assert score_num_tiendas(4, real_weights)[0] == 30
     assert score_num_tiendas(2, real_weights)[0] == 15
     assert score_num_tiendas(1, real_weights)[0] == 5
-    assert score_num_tiendas(10, real_weights)[0] == 10
+    # Volumen crítico (central/franquicia) empata con la micro-cadena ideal
+    assert score_num_tiendas(10, real_weights)[0] == 30
 
 
 def test_score_madurez(real_weights):
-    # Sin tecnología: usa el valor base de ecommerce_funcional (12)
-    assert score_madurez_digital("ecommerce_funcional", real_weights)[0] == 12
-    assert score_madurez_digital("solo_redes_sociales", real_weights)[0] == 5
-    assert score_madurez_digital("sin_presencia", real_weights)[0] == 0
-    # Con tecnología: WooCommerce=20, PrestaShop/Magento=15, Shopify=10
+    # Sin tecnología: valor base de ecommerce_funcional (10)
+    assert score_madurez_digital("ecommerce_funcional", real_weights)[0] == 10
+    # El negocio solo en redes puntúa por encima del ecommerce genérico (cliente premium)
+    assert score_madurez_digital("solo_redes_sociales", real_weights)[0] == 15
+    assert score_madurez_digital("sin_presencia", real_weights)[0] == 5
+    # Con tecnología: WooCommerce/PrestaShop=20, Magento=15, Shopify=8
     assert score_madurez_digital("ecommerce_funcional", real_weights, "WooCommerce")[0] == 20
-    assert score_madurez_digital("ecommerce_funcional", real_weights, "PrestaShop")[0] == 15
+    assert score_madurez_digital("ecommerce_funcional", real_weights, "PrestaShop")[0] == 20
     assert score_madurez_digital("ecommerce_funcional", real_weights, "Magento")[0] == 15
-    assert score_madurez_digital("ecommerce_funcional", real_weights, "Shopify")[0] == 10
+    assert score_madurez_digital("ecommerce_funcional", real_weights, "Shopify")[0] == 8
     # Tecnología desconocida → cae al base
-    assert score_madurez_digital("ecommerce_funcional", real_weights, "Velfix")[0] == 12
+    assert score_madurez_digital("ecommerce_funcional", real_weights, "Velfix")[0] == 10
 
 
 def test_tramo_for_score(real_weights):
@@ -160,25 +163,40 @@ def test_score_avatar_match_avatar1(real_avatars, real_weights):
 
 
 def test_score_avatar_partial(real_avatars, real_weights):
-    # Cumple población + tiendas pero no distancia ni ecommerce
+    # Encaje parcial sobre Avatar 3 (4 criterios, n=2): cumple población + distancia,
+    # falla num_tiendas y ecommerce → 2/4 → parcial.
     ctx = {
-        "poblacion": 25000,
+        "poblacion": 250000,
         "distancia_eci_km": 5,
-        "num_tiendas": 4,
+        "num_tiendas": 5,
         "ecommerce": False,
     }
     pts, etiqueta, av_id = score_avatar(ctx, real_avatars, real_weights)
-    # 3/4 cumplidos para avatar 1: poblacion ✓, distancia ✗, num_tiendas ✓, ecommerce_requerido=True y ecommerce=False → ✗ → 2 cumplidos
-    # encaje_parcial_si_cumple_n=2 → encaje parcial
-    assert pts == 8
+    assert av_id == 3
+    assert pts == 7
     assert "parcial" in etiqueta
 
 
-def test_score_avatar_no_match(real_avatars, real_weights):
+def test_score_avatar_volume_node_avatar4(real_avatars, real_weights):
+    # Central/franquicia: 50 tiendas con geo válida → Avatar 4 encaje claro.
     ctx = {
         "poblacion": 500,
         "distancia_eci_km": 200,
         "num_tiendas": 50,
+        "ecommerce": False,
+    }
+    pts, etiqueta, av_id = score_avatar(ctx, real_avatars, real_weights)
+    assert av_id == 4
+    assert pts == 15
+    assert "claro" in etiqueta
+
+
+def test_score_avatar_no_match(real_avatars, real_weights):
+    # Tienda única rural y aislada: no encaja con ningún avatar.
+    ctx = {
+        "poblacion": 500,
+        "distancia_eci_km": 200,
+        "num_tiendas": 1,
         "ecommerce": False,
     }
     pts, _, av_id = score_avatar(ctx, real_avatars, real_weights)
@@ -248,11 +266,11 @@ def test_compute_score_microcadena_galicia(real_weights, real_avatars, real_eci)
         "tecnologia": "WooCommerce",
     }
     result = compute_score(ctx, eci_locations=real_eci, avatares=real_avatars, weights=real_weights)
-    # Distancia ~16km → sombra ECI = 5pts. Pob 31k → ideal = 15. Tiendas 4 → 25.
-    # Madurez ecommerce+Woo → 20. Avatar 1: pob ✓ dist ✗ tiendas ✓ ecommerce ✓ = 3/4 → parcial = 8.
-    # Total = 5 + 15 + 25 + 20 + 8 = 73 → P2
-    assert result["puntuacion_total"] == 73
-    assert result["prioridad"] == "P2"
+    # Distancia ~16km → sombra ECI = 10pts. Pob 31k → ideal = 15. Tiendas 4 → 30.
+    # Madurez ecommerce+Woo → 20. Avatar 1: pob ✓ dist ✗ tiendas ✓ (ecommerce no se evalúa) = 2/3 → no encaja.
+    # Total = 10 + 15 + 30 + 20 + 0 = 75 → P1
+    assert result["puntuacion_total"] == 75
+    assert result["prioridad"] == "P1"
     assert "ECI" in result["justificacion"]
     assert "tiendas" in result["justificacion"]
 

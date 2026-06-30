@@ -1,51 +1,51 @@
 {
-  "_doc": "Pesos y bandas del scoring de prioridad comercial. Total máximo: 100 pts. Editar este fichero NO requiere tocar código — el módulo src/analyzer/scoring.py lo lee en cada ejecución.",
+  "_doc": "Pesos y bandas del scoring de prioridad comercial para Velfix. Total máximo: 100 pts. Editar este fichero NO requiere tocar código — el módulo src/analyzer/scoring.py lo lee en cada ejecución.",
   "criterios": {
     "distancia_eci": {
       "_doc": "Distancia (km) al centro El Corte Inglés más cercano. La banda 45–85km es la zona dulce: lejos para que el ECI no canibalice clientes, cerca para sentir su presencia como espejo.",
-      "peso_max": 25,
+      "peso_max": 20,
       "bandas": [
-        {"min_km": 45, "max_km": 85, "puntos": 25, "etiqueta": "óptimo (45–85km)"},
+        {"min_km": 45, "max_km": 85, "puntos": 20, "etiqueta": "óptimo (45–85km)"},
         {"min_km": 30, "max_km": 45, "puntos": 15, "etiqueta": "cercano (30–45km)"},
         {"min_km": 85, "max_km": 120, "puntos": 15, "etiqueta": "lejano (85–120km)"},
-        {"min_km": 0,  "max_km": 30, "puntos": 5,  "etiqueta": "sombra ECI (<30km)"},
+        {"min_km": 0,  "max_km": 30, "puntos": 10, "etiqueta": "sombra ECI (<30km)"},
         {"min_km": 120, "max_km": 99999, "puntos": 10, "etiqueta": "aislado (>120km)"}
       ]
     },
     "poblacion_municipio": {
-      "_doc": "Población del municipio donde se ubica el negocio. 15k–40k es la cabecera comarcal ideal.",
+      "_doc": "Población del municipio donde se ubica el negocio. 15k–50k es la cabecera comarcal ideal.",
       "peso_max": 15,
       "bandas": [
-        {"min": 15000, "max": 40000, "puntos": 15, "etiqueta": "cabecera ideal (15–40k)"},
-        {"min": 10000, "max": 14999, "puntos": 10, "etiqueta": "cabecera pequeña (10–15k)"},
-        {"min": 40001, "max": 70000, "puntos": 10, "etiqueta": "cabecera grande (40–70k)"},
-        {"min": 0,     "max": 9999,  "puntos": 5,  "etiqueta": "rural (<10k)"},
-        {"min": 70001, "max": 99999999, "puntos": 5, "etiqueta": "urbano (>70k)"}
+        {"min": 15000, "max": 50000, "puntos": 15, "etiqueta": "cabecera ideal (15–50k)"},
+        {"min": 50001, "max": 150000, "puntos": 12, "etiqueta": "ciudad media (50–150k)"},
+        {"min": 10000, "max": 14999, "puntos": 8, "etiqueta": "cabecera pequeña (10–15k)"},
+        {"min": 0,     "max": 9999,  "puntos": 3, "etiqueta": "rural (<10k)"},
+        {"min": 150001, "max": 99999999, "puntos": 10, "etiqueta": "gran urbe (>150k)"}
       ]
     },
     "num_tiendas": {
-      "_doc": "Número de tiendas que comparten marca normalizada en el dataset. 3–6 = micro-cadena ideal.",
-      "peso_max": 25,
+      "_doc": "Número de tiendas que comparten marca normalizada en el dataset. Ajustado: premiamos el volumen crítico (franquicias/centrales, 8+) tanto como a la micro-cadena ideal (3–7).",
+      "peso_max": 30,
       "bandas": [
-        {"min": 3, "max": 6,  "puntos": 25, "etiqueta": "micro-cadena 3–6 locales"},
+        {"min": 3, "max": 7,  "puntos": 30, "etiqueta": "micro-cadena ideal (3–7 locales)"},
+        {"min": 8, "max": 999, "puntos": 30, "etiqueta": "CENTRAL / FRANQUICIA (>7 locales)"},
         {"min": 2, "max": 2,  "puntos": 15, "etiqueta": "duo (2 locales)"},
-        {"min": 1, "max": 1,  "puntos": 5,  "etiqueta": "tienda única"},
-        {"min": 7, "max": 99, "puntos": 10, "etiqueta": "cadena grande (>6)"}
+        {"min": 1, "max": 1,  "puntos": 5,  "etiqueta": "tienda única"}
       ]
     },
     "madurez_digital": {
-      "_doc": "Estado del e-commerce. Se infiere de fingerprint (es_tienda) + presencia de web. Si madurez=ecommerce_funcional y la tecnología detectada está en 'por_tecnologia', su valor sobrescribe a 'valores.ecommerce_funcional'. Prioridad comercial: WooCommerce (más dolores) > PrestaShop/Magento > Shopify (mejor cubiertos).",
+      "_doc": "Estado del e-commerce. Se infiere de fingerprint (es_tienda) + presencia de web. Si madurez=ecommerce_funcional y la tecnología detectada está en 'por_tecnologia', su valor sobrescribe a 'valores.ecommerce_funcional'. WooCommerce y PrestaShop puntúan al máximo: son los que más sufren roturas de stock y más necesitan Velfix. El negocio solo en redes (sin venta online) es cliente premium: tiene pulmón físico y está listo para la unificación digital.",
       "peso_max": 20,
       "valores": {
-        "ecommerce_funcional": 12,
-        "solo_redes_sociales": 5,
-        "sin_presencia": 0
+        "ecommerce_funcional": 10,
+        "solo_redes_sociales": 15,
+        "sin_presencia": 5
       },
       "por_tecnologia": {
         "WooCommerce": 20,
-        "PrestaShop": 15,
+        "PrestaShop": 20,
         "Magento": 15,
-        "Shopify": 10
+        "Shopify": 8
       }
     },
     "encaje_avatar": {
@@ -53,15 +53,15 @@
       "peso_max": 15,
       "valores": {
         "encaje_claro": 15,
-        "encaje_parcial": 8,
+        "encaje_parcial": 7,
         "no_encaja": 0
       }
     }
   },
   "tramos_prioridad": [
-    {"id": "P1", "min_puntos": 75, "etiqueta": "Prioridad 1 — Visita comercial inmediata"},
-    {"id": "P2", "min_puntos": 55, "etiqueta": "Prioridad 2 — Visita planificada"},
-    {"id": "P3", "min_puntos": 35, "etiqueta": "Prioridad 3 — Seguimiento"},
+    {"id": "P1", "min_puntos": 75, "etiqueta": "Prioridad 1 — Visita o contacto comercial inmediato"},
+    {"id": "P2", "min_puntos": 55, "etiqueta": "Prioridad 2 — Prospección planificada"},
+    {"id": "P3", "min_puntos": 35, "etiqueta": "Prioridad 3 — Seguimiento / Nutrición"},
     {"id": "P4", "min_puntos": 0,  "etiqueta": "Prioridad 4 — Bajo interés"}
   ]
 }
