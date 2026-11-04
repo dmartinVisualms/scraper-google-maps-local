@@ -14,6 +14,7 @@ import openpyxl
 from src.analyzer.brand_filter import is_excluded, load_brands
 from src.analyzer.email_extract import get_email
 from src.analyzer.fingerprint import detect_platform, fetch_page, is_social_url
+from src.analyzer.instagram import DataForSeoBudget, _dataforseo_creds, resolve_instagram
 from src.analyzer.scoring import (
     compute_score,
     coords_from_maps_url,
@@ -104,6 +105,17 @@ async def _run(args: argparse.Namespace) -> None:
     metrics = {"filtered": 0, "analyzed": 0, "stores": 0, "errors": 0}
     analysis_rows: List[dict] = []
 
+    # Instagram fallback vía DataForSEO: se activa solo si hay credenciales.
+    ig_creds = _dataforseo_creds()
+    ig_budget = DataForSeoBudget() if ig_creds else None
+    if ig_creds:
+        LOGGER.info("Instagram fallback: DataForSEO ACTIVO (cap=%d queries)", ig_budget.cap)
+    else:
+        LOGGER.info(
+            "Instagram fallback: solo extracción de HTML "
+            "(añade DATAFORSEO_LOGIN/DATAFORSEO_PASSWORD al .env para activar SERP fallback)"
+        )
+
     for row in rows:
         nombre = row.get("nombre", "")
         web = row.get("web", "").strip()
@@ -171,6 +183,12 @@ async def _run(args: argparse.Namespace) -> None:
         # Email: real desde el HTML ya descargado, o ficticio basado en el nombre
         email = get_email(html, nombre)
 
+        # Instagram: primero HTML del negocio; si no, DataForSEO (si hay creds)
+        instagram, ig_fuente = await resolve_instagram(
+            html=html, nombre=nombre, municipio=municipio,
+            creds=ig_creds, budget=ig_budget,
+        )
+
         metrics["analyzed"] += 1
         analysis_rows.append({
             **row,
@@ -180,12 +198,14 @@ async def _run(args: argparse.Namespace) -> None:
             "puntuacion": score["puntuacion_total"],
             "justificacion": score["justificacion"],
             "email": email,
+            "instagram": instagram,
+            "instagram_fuente": ig_fuente,
         })
 
         LOGGER.info(
-            "[analizado] %s | tienda=%s | %s | %dpts → %s | email=%s",
+            "[analizado] %s | tienda=%s | %s | %dpts → %s | email=%s | ig=%s (%s)",
             nombre, es_tienda, tecnologia, score["puntuacion_total"],
-            score["prioridad"], email,
+            score["prioridad"], email, instagram or "-", ig_fuente,
         )
         _emit_stats(metrics)
 
@@ -213,13 +233,18 @@ async def _run(args: argparse.Namespace) -> None:
     LOGGER.info("XLSX guardado: %s", xlsx_path)
 
     elapsed = time.perf_counter() - start_ts
+    ig_from_web = sum(1 for r in analysis_rows if r.get("instagram_fuente") == "web")
+    ig_from_dfs = sum(1 for r in analysis_rows if r.get("instagram_fuente") == "dataforseo")
+    ig_none = sum(1 for r in analysis_rows if r.get("instagram_fuente") == "-")
     LOGGER.info(
-        "── Resumen análisis ──\ntotal=%d filtrados=%d analizados=%d tiendas=%d errores=%d elapsed_s=%.2f",
+        "── Resumen análisis ──\ntotal=%d filtrados=%d analizados=%d tiendas=%d "
+        "errores=%d IG(web=%d dfs=%d none=%d) elapsed_s=%.2f",
         len(rows),
         metrics["filtered"],
         metrics["analyzed"],
         metrics["stores"],
         metrics["errors"],
+        ig_from_web, ig_from_dfs, ig_none,
         elapsed,
     )
     _emit_stats(metrics)

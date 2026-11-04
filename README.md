@@ -1,4 +1,4 @@
-# Google Maps Scraper `v0.9.6`
+# Google Maps Scraper `v0.9.7`
 
 Scraper de negocios de Google Maps con interfaz web integrada. Extrae nombre, teléfono, dirección, web, valoración y categoría de los resultados de búsqueda y los exporta a CSV.
 
@@ -157,6 +157,25 @@ El analizador añade una columna `email` a la pestaña Análisis:
 
 - **Email real** — primer email "humano" encontrado en el HTML de la web (`mailto:` o texto plano). Filtra falsos positivos comunes: nombres de fichero (`logo@2x.png`, `font@1x.woff2`), DSN de Sentry, `noreply@…`, etc.
 - **Email ficticio** — si no se encuentra ninguno (o el negocio no tiene web), se genera `vmarketing@<slug>.com` donde `<slug>` es el nombre del negocio normalizado a ASCII y sin caracteres no válidos en direcciones de correo. Ej: "Joyería Águila & Co. (Vigo)" → `vmarketing@joyeriaaguilacovigo.com`.
+
+### Instagram del negocio
+
+El analizador añade dos columnas a la pestaña Análisis:
+
+- **`instagram`** — URL del perfil (`https://instagram.com/<handle>`) o vacío.
+- **`instagram_fuente`** — `web` (extraído del HTML del negocio), `dataforseo` (encontrado por búsqueda en Google vía SERP API), o `-` (no localizado).
+
+Flujo: primero se parsea el HTML ya descargado para fingerprint buscando enlaces a `instagram.com/<handle>` (filtrando rutas reservadas como `/p/`, `/reel/`, etc.). Si no aparece ninguno, se consulta **DataForSEO SERP API** con la query `site:instagram.com "<nombre>" "<municipio>"`.
+
+El fallback SERP se activa solo si hay credenciales en `.env`:
+
+```
+DATAFORSEO_LOGIN=tu_email@cuenta.com
+DATAFORSEO_PASSWORD=tu_api_password
+DATAFORSEO_MAX_PER_RUN=500   # cap de seguridad por ejecución
+```
+
+Coste: endpoint `/serp/google/organic/live/regular` → $2 / 1000 queries (≈2-3s latencia por búsqueda). Signup con depósito mínimo $50 en https://dataforseo.com/. Sin credenciales el analizador funciona igual pero sin fallback (solo extracción de HTML).
 
 ### Avatares comerciales por defecto
 
