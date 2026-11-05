@@ -193,6 +193,18 @@
     #log::-webkit-scrollbar-track { background: transparent; }
     #log::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 3px; }
 
+    details.scoring summary { cursor: pointer; font-size: 0.85rem; font-weight: 600; color: #cbd5e1; }
+    details.scoring summary .muted { color: #64748b; font-weight: 400; font-size: 0.75rem; margin-left: 0.4rem; }
+    .scoring-body { margin-top: 1rem; font-size: 0.8rem; color: #94a3b8; }
+    .scoring-body h3 { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: #64748b; margin: 1.1rem 0 0.5rem; }
+    .scoring-body table { width: 100%; border-collapse: collapse; }
+    .scoring-body td { padding: 0.28rem 0.4rem; border-top: 1px solid #262a3d; vertical-align: top; }
+    .scoring-body td.pts { text-align: right; color: #f8fafc; font-weight: 600; white-space: nowrap; }
+    .scoring-body .crit { color: #e2e8f0; font-weight: 600; padding-top: 0.6rem; }
+    .scoring-body .doc { font-size: 0.72rem; color: #64748b; margin: 0.15rem 0 0.35rem; }
+    .scoring-body .avatar { margin-bottom: 0.7rem; }
+    .scoring-body .avatar b { color: #e2e8f0; }
+
     .save-indicator {
       font-size: 0.75rem;
       color: #34d399;
@@ -205,6 +217,13 @@
   <div class="topbar">
     <a href="/" class="back-link">← Volver</a>
     <h1>Analizador de resultados</h1>
+  </div>
+
+  <div class="card">
+    <details class="scoring">
+      <summary>Criterios de priorización y puntuación <span class="muted" id="scoring-total"></span></summary>
+      <div class="scoring-body" id="scoring-body">Cargando…</div>
+    </details>
   </div>
 
   <div class="card">
@@ -392,8 +411,58 @@
       };
     });
 
+    const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    const fmt = (n, cap = Infinity) => n >= cap ? '∞' : Number(n).toLocaleString('es-ES');
+    const CRIT_LABELS = {
+      distancia_eci: 'Distancia al El Corte Inglés más cercano',
+      poblacion_municipio: 'Población del municipio',
+      num_tiendas: 'Nº de tiendas de la misma marca',
+      madurez_digital: 'Madurez digital',
+      encaje_avatar: 'Encaje con avatar comercial',
+    };
+    const VAL_LABELS = {
+      ecommerce_funcional: 'E-commerce funcional (tecnología no listada)',
+      solo_redes_sociales: 'Web sin tienda online / solo redes',
+      sin_presencia: 'Sin web',
+      encaje_claro: 'Encaje claro', encaje_parcial: 'Encaje parcial', no_encaja: 'No encaja',
+    };
+
+    async function loadScoring() {
+      const body = document.getElementById('scoring-body');
+      try {
+        const { weights, avatares } = await (await fetch('/scoring-config')).json();
+        const crits = Object.entries(weights.criterios);
+        const total = crits.reduce((a, [, c]) => a + c.peso_max, 0);
+        document.getElementById('scoring-total').textContent = `· ${crits.length} criterios, máx. ${total} pts`;
+
+        let html = '<h3>Criterios</h3><table>';
+        for (const [key, c] of crits) {
+          html += `<tr><td class="crit">${esc(CRIT_LABELS[key] || key)}</td><td class="pts crit">máx. ${c.peso_max}</td></tr>`;
+          if (c._doc) html += `<tr><td colspan="2" style="border:none"><div class="doc">${esc(c._doc)}</div></td></tr>`;
+          for (const b of [...(c.bandas || [])].sort((x, y) => y.puntos - x.puntos))
+            html += `<tr><td>${esc(b.etiqueta)}</td><td class="pts">${b.puntos}</td></tr>`;
+          for (const [k, v] of Object.entries(c.por_tecnologia || {}))
+            html += `<tr><td>E-commerce ${esc(k)}</td><td class="pts">${v}</td></tr>`;
+          for (const [k, v] of Object.entries(c.valores || {}))
+            html += `<tr><td>${esc(VAL_LABELS[k] || k)}</td><td class="pts">${v}</td></tr>`;
+        }
+        html += '</table><h3>Tramos de prioridad</h3><table>';
+        for (const t of weights.tramos_prioridad)
+          html += `<tr><td><b style="color:#e2e8f0">${esc(t.id)}</b> — ${esc(t.etiqueta.split('— ')[1] || t.etiqueta)}</td><td class="pts">≥ ${t.min_puntos} pts</td></tr>`;
+        html += '</table><h3>Avatares comerciales</h3>';
+        for (const a of avatares) {
+          const k = a.criterios;
+          html += `<div class="avatar"><b>${a.id}. ${esc(a.nombre)}</b> — población ${fmt(k.poblacion_municipio[0])}–${fmt(k.poblacion_municipio[1], 9999999)} · ECI ${fmt(k.distancia_eci_km[0])}–${fmt(k.distancia_eci_km[1], 9999)} km · ${k.num_tiendas[0]}–${fmt(k.num_tiendas[1], 999)} tiendas · e-commerce ${k.ecommerce_requerido ? 'requerido' : 'opcional'} · parcial si cumple ${a.encaje_parcial_si_cumple_n}<div class="doc">${esc(a.descripcion)}</div></div>`;
+        }
+        body.innerHTML = html + '<div class="doc" style="margin-top:0.8rem">Editable en <code>config/scoring_weights.json</code> y <code>config/scoring_avatars.json</code>; se aplica en el siguiente análisis.</div>';
+      } catch (_) {
+        body.textContent = 'No se pudo cargar la configuración de scoring.';
+      }
+    }
+
     loadJobInfo();
     loadBrands();
+    loadScoring();
   </script>
 </body>
 </html>

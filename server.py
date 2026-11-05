@@ -255,6 +255,12 @@ async def get_brands() -> dict:
     return json.loads(BRANDS_PATH.read_text(encoding="utf-8"))
 
 
+@app.get("/scoring-config")
+async def get_scoring_config() -> dict:
+    from src.analyzer.scoring import load_avatares, load_weights
+    return {"weights": load_weights(), "avatares": load_avatares()}
+
+
 @app.post("/brands")
 async def save_brands(payload: Any = Body(...)) -> dict:
     BRANDS_PATH.parent.mkdir(parents=True, exist_ok=True)
