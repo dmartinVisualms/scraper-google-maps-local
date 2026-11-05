@@ -36,6 +36,10 @@ _CSV_FIELDS = [
 ]
 
 
+# Columnas del CSV que se omiten en la pestaña "Análisis" (siguen en "Datos originales").
+_ANALYSIS_DROP = {"rating", "source_query", "retrieved_at_utc", "maps_url", "lat", "lon"}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Google Maps Scraper — Analyzer")
     parser.add_argument("--csv-path", required=True, help="Ruta al CSV de entrada")
@@ -224,7 +228,7 @@ async def _run(args: argparse.Namespace) -> None:
     # Sheet 2: analysis results
     ws2 = wb.create_sheet("Análisis")
     if analysis_rows:
-        analysis_headers = list(analysis_rows[0].keys())
+        analysis_headers = [h for h in analysis_rows[0].keys() if h not in _ANALYSIS_DROP]
         ws2.append(analysis_headers)
         for row in analysis_rows:
             ws2.append([row.get(h, "") for h in analysis_headers])
