@@ -46,6 +46,8 @@ LOGGER = logging.getLogger(__name__)
 _ROOT = Path(__file__).resolve().parents[2]
 _CACHE_DIR = _ROOT / "cache" / "icp"
 _CLIENTES = _ROOT / "config" / "clientes_velfix.json"
+_CADENAS = _ROOT / "config" / "cadenas.json"
+CADENA_MIN = 8  # tiendas a partir de las cuales se etiqueta como CADENA (nunca P1)
 
 # Columnas del CSV que se omiten en la pestaña "Análisis" (siguen en "Datos originales").
 _ANALYSIS_DROP = {"rating", "source_query", "retrieved_at_utc", "maps_url", "lat", "lon"}
@@ -173,6 +175,13 @@ def _signals_from(entry: Optional[dict]) -> Optional[Signals]:
     return Signals(**entry["signals"])
 
 
+def _cadenas() -> List[str]:
+    try:
+        return [norm(c).replace(" ", "") for c in json.loads(_CADENAS.read_text(encoding="utf-8"))["cadenas"]]
+    except (OSError, ValueError, KeyError):
+        return []
+
+
 def _clientes() -> List[str]:
     try:
         return [norm(c).replace(" ", "") for c in json.loads(_CLIENTES.read_text(encoding="utf-8"))["clientes"]]
@@ -186,6 +195,7 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
     `ig_budget` permite compartir el límite de DataForSEO entre varios ficheros."""
     brands = load_brands(args.brands_path)
     clientes = _clientes()
+    cadenas = _cadenas()
     marcas_cfg = load_marcas_config()
     tipicas = {norm(x) for x in marcas_cfg.get("multimarca_tipicas", [])}
     weights, avatares, eci = load_weights(), load_avatares(), load_eci_locations()
@@ -312,12 +322,24 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
         marcas = [m for m in (sig.marcas if sig else []) if norm(m) not in norm(nombre)]
         n_tip = sum(1 for m in marcas if norm(m) in tipicas)
         n_tiendas_web = sig.num_tiendas_web if sig else None
+        n_tiendas_total = n_tiendas_web if n_tiendas_web else num_tiendas_for(nombre, brand_counts, municipio)
+        nombre_plano = norm(nombre).replace(" ", "")
+        en_lista = any(cd and cd in nombre_plano for cd in cadenas)
+        # Etiqueta especial: cadenas de 8+ tiendas (o de la lista) pueden ser objetivo
+        # aunque no sean P1 o salgan descartadas.
+        if n_tiendas_total >= CADENA_MIN:
+            etiqueta_especial = f"CADENA ({n_tiendas_total} tiendas)"
+        elif en_lista:
+            etiqueta_especial = "CADENA (config/cadenas.json)"
+        else:
+            etiqueta_especial = ""
         evid_txt = "; ".join(c.evidencias)
         base = {k: v for k, v in row.items()}
         fila = {
             **base,
             "es_tienda": es_tienda, "tecnologia": tecnologia,
-            "tipo_negocio": c.tipo_negocio, "confianza": round(c.confianza, 2), "evidencias": evid_txt,
+            "tipo_negocio": c.tipo_negocio, "etiqueta": etiqueta_especial,
+            "confianza": round(c.confianza, 2), "evidencias": evid_txt,
             "num_marcas": len(marcas) if sig else "", "marcas_detectadas": ", ".join(marcas[:40]),
             "num_tiendas_web": n_tiendas_web if n_tiendas_web is not None else "",
             "provincias_tiendas": ", ".join(PROVINCIAS.get(p, p) for p in (sig.provincias if sig else [])),
@@ -360,9 +382,13 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
                 "num_marcas": len(marcas) if marcas else None, "n_tipicas": n_tip,
             }
             score = compute_score(ctx, eci_locations=eci, avatares=avatares, weights=weights)
+            prioridad = score["prioridad"]
+            nota = ""
+            if etiqueta_especial and prioridad == "P1":
+                prioridad, nota = "P2", " | cadena: como máximo P2"
             fila.update(motivo_descarte="", revisar_manual="",
-                        prioridad=score["prioridad"], puntuacion=score["puntuacion_total"],
-                        justificacion=f"{etiqueta} — {principal} | {score['justificacion']}")
+                        prioridad=prioridad, puntuacion=score["puntuacion_total"],
+                        justificacion=f"{etiqueta} — {principal} | {score['justificacion']}{nota}")
         fila.update(
             email=entry.get("email") or fictitious_email(nombre),
             instagram=it["instagram"], instagram_fuente=it["ig_fuente"],

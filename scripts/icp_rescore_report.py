@@ -65,7 +65,7 @@ async def main() -> None:
     budget = DataForSeoBudget(default_max_usd()) if creds else None
     ICP_OUT.mkdir(exist_ok=True)
 
-    resumen, salen, nuevos_p1 = [], [], []
+    resumen, salen, nuevos_p1, cadenas = [], [], [], {}
     for name in FILES:
         rows = _dedup_rows(_read_csv(str(MAIN_OUT / f"{name}.csv")))
         old = _old_priorities(MAIN_OUT / f"{name}.xlsx")
@@ -75,8 +75,15 @@ async def main() -> None:
         prio = Counter(str(r["prioridad"]) for r in res)
         tipos = Counter(r["tipo_negocio"] for r in res)
         p1_antes = sum(1 for v in old.values() if v[0] == "P1")
+        n_cad = sum(1 for r in res if r.get("etiqueta"))
         resumen.append((name, len(rows), p1_antes, prio.get("P1", 0), tipos.get("multimarca", 0),
-                        prio.get("descartado", 0), prio.get("revision", 0), tipos))
+                        prio.get("descartado", 0), prio.get("revision", 0), n_cad, tipos))
+        for r in res:
+            if r.get("etiqueta"):
+                c = cadenas.setdefault(r["nombre"].strip(), {"etiqueta": r["etiqueta"], "tipos": Counter(),
+                                                             "prios": Counter(), "web": r.get("web") or ""})
+                c["tipos"][r["tipo_negocio"]] += 1
+                c["prios"][str(r["prioridad"])] += 1
         for r in res:
             antes = old.get(_key(r), (None, None))
             if antes[0] == "P1" and r["prioridad"] != "P1":
@@ -94,18 +101,27 @@ async def main() -> None:
          + (f" (quedaron {pendientes} negocios sin web sin buscar por el límite de $1)" if pendientes else ""),
          "", "«Antes» es la prioridad del XLSX que ya existía junto a cada CSV, calculada con la versión normal.",
          "", "## Resumen por fichero", "",
-         "| Fichero | Negocios | P1 antes | P1 ahora | Multimarca | Descartados | Revisión |",
-         "|---|---|---|---|---|---|---|"]
-    for name, n, a, b, mm, desc, rev, _ in resumen:
-        L.append(f"| {name} | {n} | {a} | {b} | {mm} | {desc} | {rev} |")
-    tot = [sum(x[i] for x in resumen) for i in range(1, 7)]
-    L.append(f"| **Total** | **{tot[0]}** | **{tot[1]}** | **{tot[2]}** | **{tot[3]}** | **{tot[4]}** | **{tot[5]}** |")
+         "| Fichero | Negocios | P1 antes | P1 ahora | Multimarca | Descartados | Revisión | Etiqueta CADENA |",
+         "|---|---|---|---|---|---|---|---|"]
+    for name, n, a, b, mm, desc, rev, cad, _ in resumen:
+        L.append(f"| {name} | {n} | {a} | {b} | {mm} | {desc} | {rev} | {cad} |")
+    tot = [sum(x[i] for x in resumen) for i in range(1, 8)]
+    L.append("| **Total** | " + " | ".join(f"**{t}**" for t in tot) + " |")
 
     tipos_tot = Counter()
-    for *_, t in resumen:
+    for *_, t in resumen:  # noqa: B007
         tipos_tot.update(t)
     L += ["", "## Tipos de negocio (todos los ficheros)", "", "| Tipo | Negocios |", "|---|---|"]
     L += [f"| {t} | {n} |" for t, n in tipos_tot.most_common()]
+
+    L += ["", f"## Cadenas (etiqueta CADENA): {len(cadenas)} nombres", "",
+          "Negocios con 8 o más tiendas (en su web o en el CSV) o en config/cadenas.json. Nunca pasan de P2, "
+          "pero pueden ser objetivo. Se agrupan por nombre.", "",
+          "| Cadena | Etiqueta | Locales en los CSV | Tipo | Prioridad | Web |", "|---|---|---|---|---|---|"]
+    for nom, c in sorted(cadenas.items(), key=lambda kv: -sum(kv[1]["tipos"].values())):
+        L.append(f"| {_md_cell(nom)} | {c['etiqueta']} | {sum(c['tipos'].values())} | "
+                 f"{', '.join(t for t, _ in c['tipos'].most_common(2))} | "
+                 f"{', '.join(f'{p} ({n})' for p, n in c['prios'].most_common(3))} | {_md_cell(c['web'])} |")
 
     L += ["", f"## Los que salen de P1 ({len(salen)})", "",
           "| Negocio | Municipio | Fichero | Antes | Ahora | Tipo | Evidencia principal |",

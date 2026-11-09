@@ -1,0 +1,12 @@
+{
+  "_doc": "Cadenas conocidas. No se eliminan del análisis (a diferencia de excluded_brands.json): reciben la etiqueta CADENA y nunca pasan de P2, porque pueden ser objetivo aunque no sean el ICP principal. Además, cualquier negocio con 8 o más tiendas (en su web o en el CSV) recibe la etiqueta automáticamente. Se compara el nombre sin mayúsculas, acentos ni espacios.",
+  "cadenas": [
+    "Courir",
+    "Snipes",
+    "Deichmann",
+    "Merkal",
+    "Pilar Prieto",
+    "Punt Roma",
+    "PuntRoma"
+  ]
+}
