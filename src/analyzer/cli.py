@@ -30,13 +30,14 @@ from src.analyzer.icp import llm
 from src.analyzer.icp.fetch import USER_AGENT, make_live_fetcher
 from src.analyzer.icp.rules import UMBRAL_LLM, Clasificacion, classify, load_marcas_config, norm
 from src.analyzer.icp.signals import PROVINCIAS, Signals, extract_signals
+from src.analyzer.icp.web_finder import browser_fetcher, buscar_web_google
 from src.analyzer.instagram import (
     DataForSeoBudget, SearchCache, _dataforseo_creds, default_max_usd,
     extract_instagram_from_html, resolve_instagram_with_snippets,
 )
 from src.analyzer.scoring import (
     compute_score, coords_from_maps_url, count_stores_by_brand, load_avatares,
-    load_eci_locations, load_weights, num_tiendas_for,
+    load_eci_locations, load_weights, num_tiendas_for, _brand_key, _GENERIC_BRAND_WORDS,
 )
 from src.comunidad.dataset import get_poblacion_municipio
 from src.utils.logging import setup_logging
@@ -126,8 +127,10 @@ class JsonCache:
         tmp.replace(self.path)
 
 
-async def _fase_webs(hosts: Dict[str, str], cache: JsonCache, concurrency: int = 8) -> Dict[str, dict]:
-    """Para cada dominio: señales + datos de la portada (plataforma, email, Instagram)."""
+async def _fase_webs(hosts: Dict[str, str], cache: JsonCache, concurrency: int = 8,
+                     navegador: bool = True) -> Dict[str, dict]:
+    """Para cada dominio: señales + datos de la portada (plataforma, email, Instagram).
+    Las webs que fallan con aiohttp (403, JS) se reintentan una vez con Chromium."""
     import aiohttp
 
     out: Dict[str, dict] = {}
@@ -136,13 +139,9 @@ async def _fase_webs(hosts: Dict[str, str], cache: JsonCache, concurrency: int =
         if h not in pending:
             out[h] = cache.get(h)
     LOGGER.info("Webs: %d dominios (%d en caché, %d por descargar)", len(hosts), len(out), len(pending))
-    if not pending:
-        return out
 
-    sem = asyncio.Semaphore(concurrency)
-    done = 0
-    async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
-        fetch = make_live_fetcher(session)
+    async def pasada(todo: Dict[str, str], fetch, sem, etiqueta: str) -> None:
+        done = 0
 
         async def one(host: str, web: str) -> None:
             nonlocal done
@@ -156,17 +155,94 @@ async def _fase_webs(hosts: Dict[str, str], cache: JsonCache, concurrency: int =
                 "email": extract_email_from_html(html),
                 "instagram": extract_instagram_from_html(html) or "",
                 "ts": int(time.time()),
+                "navegador": etiqueta == "navegador",
             }
             out[host] = entry
             cache.put(host, entry)
             done += 1
-            if done % 25 == 0 or done == len(pending):
-                LOGGER.info("Webs analizadas: %d/%d", done, len(pending))
+            if done % 25 == 0 or done == len(todo):
+                LOGGER.info("Webs analizadas (%s): %d/%d", etiqueta, done, len(todo))
                 cache.save()
 
-        await asyncio.gather(*(one(h, w) for h, w in pending.items()))
+        await asyncio.gather(*(one(h, w) for h, w in todo.items()))
+
+    if pending:
+        async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
+            await pasada(pending, make_live_fetcher(session), asyncio.Semaphore(concurrency), "http")
+    fallidas = {h: hosts[h] for h in hosts
+                if not out[h]["signals"].get("ok") and not out[h].get("navegador")}
+    if navegador and fallidas:
+        LOGGER.info("Webs: reintentando %d dominios con navegador", len(fallidas))
+        try:
+            async with browser_fetcher() as fetch:
+                await pasada(fallidas, fetch, asyncio.Semaphore(4), "navegador")
+        except Exception as exc:  # noqa: BLE001 — sin Chromium el análisis sigue con lo que hay
+            LOGGER.warning("Reintento con navegador no disponible: %s", exc)
     cache.save()
     return out
+
+
+async def _recuperar_webs(kept: List[dict], webs: Dict[str, dict], web_cache: JsonCache,
+                          creds, budget: Optional[DataForSeoBudget], filtro=None) -> Dict[int, tuple]:
+    """Para negocios sin web legible devuelve {índice: (web, fuente)}.
+    1) la web de otro local de la misma cadena ('otro local'), gratis;
+    2) búsqueda «nombre municipio» en Google vía DataForSEO ('google'), solo si `filtro(row)`
+       es cierto (None = todos) y queda presupuesto. Las búsquedas pagadas se cachean."""
+    def legible(web: str) -> bool:
+        return bool(web) and not is_social_url(web) and bool((webs.get(_host(web)) or {}).get("signals", {}).get("ok"))
+
+    def marca(row: dict) -> str:
+        k = _brand_key(row.get("nombre", ""), row.get("municipio_origen") or "")
+        return "" if not k or set(k.split()) <= _GENERIC_BRAND_WORDS else k
+
+    por_marca: Dict[str, str] = {}
+    for row in kept:
+        web = _norm_web(row.get("web", ""))
+        if legible(web) and marca(row):
+            por_marca.setdefault(marca(row), web)
+    web_de: Dict[int, tuple] = {}
+    buscar = []
+    for i, row in enumerate(kept):
+        if legible(_norm_web(row.get("web", ""))):
+            continue
+        if marca(row) in por_marca:
+            web_de[i] = (por_marca[marca(row)], "otro local")
+        elif filtro is None or filtro(row):
+            buscar.append(i)
+    LOGGER.info("Webs recuperadas de otro local de la cadena: %d", len(web_de))
+    if not buscar or not creds or budget is None:
+        return web_de
+
+    cache = JsonCache(_CACHE_DIR / "web_search.json", enabled=True)
+    sem = asyncio.Semaphore(5)
+    encontrados: Dict[int, str] = {}
+
+    async def una(i: int) -> None:
+        row = kept[i]
+        nombre, muni = row.get("nombre", ""), (row.get("municipio_origen") or "").strip()
+        key = f"{norm(nombre)}|{norm(muni)}"
+        hit = cache.get(key)
+        if hit is None:
+            if not budget.can_spend():
+                return
+            async with sem:
+                url, cost = await buscar_web_google(nombre, muni, creds)
+            budget.charge(cost)
+            hit = {"url": url or ""}
+            if cost > 0:
+                cache.put(key, hit)
+        if hit["url"]:
+            encontrados[i] = hit["url"]
+
+    LOGGER.info("Web en Google: buscando %d negocios", len(buscar))
+    await asyncio.gather(*(una(i) for i in buscar))
+    cache.save()
+    nuevos = {_host(w): w for w in encontrados.values() if _host(w) not in webs}
+    webs.update(await _fase_webs(nuevos, web_cache))
+    ok = {i: w for i, w in encontrados.items() if legible(w)}
+    web_de.update({i: (w, "google") for i, w in ok.items()})
+    LOGGER.info("Web en Google: %d encontradas, %d legibles (de %d buscadas)", len(encontrados), len(ok), len(buscar))
+    return web_de
 
 
 def _signals_from(entry: Optional[dict]) -> Optional[Signals]:
@@ -221,7 +297,7 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
     web_cache = JsonCache(_CACHE_DIR / "webs.json", enabled=not args.refresh)
     webs = await _fase_webs(hosts, web_cache)
 
-    # ── B. Reglas + Instagram para negocios sin web ──
+    # ── A2. Web de los que no tienen una legible ──
     ig_creds = _dataforseo_creds()
     max_usd = args.dataforseo_max_usd if args.dataforseo_max_usd is not None else default_max_usd()
     if ig_budget is None and ig_creds:
@@ -229,11 +305,15 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
     ig_cache = SearchCache()
     llm_cache = JsonCache(_CACHE_DIR / "llm.json", enabled=not args.refresh)
 
+    web_de = await _recuperar_webs(kept, webs, web_cache, ig_creds, ig_budget, getattr(args, "buscar_web", None))
+
+    # ── B. Reglas + Instagram para negocios sin web ──
+
     items = []
     for i, row in enumerate(kept):
         nombre = row.get("nombre", "")
         municipio = (row.get("municipio_origen") or "").strip()
-        web = _norm_web(row.get("web", ""))
+        web, web_fuente = web_de.get(i, (_norm_web(row.get("web", "")), "maps"))
         host = _host(web) if web and not is_social_url(web) else ""
         entry = webs.get(host) if host else None
         sig = _signals_from(entry)
@@ -241,7 +321,7 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
         clas = (Clasificacion("cliente_velfix", 1.0, ["está en config/clientes_velfix.json"])
                 if es_cliente else classify(sig, nombre, marcas_cfg,
                                             n_tiendas_dataset=num_tiendas_for(nombre, brand_counts, municipio)))
-        item = {"i": i, "row": row, "nombre": nombre, "municipio": municipio, "web": web,
+        item = {"i": i, "row": row, "nombre": nombre, "municipio": municipio, "web": web, "web_fuente": web_fuente,
                 "host": host, "entry": entry, "sig": sig, "clas": clas,
                 "instagram": (entry or {}).get("instagram", ""), "ig_fuente": "web" if (entry or {}).get("instagram") else "-",
                 "snippets": []}
@@ -261,7 +341,8 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
             nonlocal hechos
             async with sem:
                 url, fuente, snippets = await resolve_instagram_with_snippets(
-                    it["nombre"], it["municipio"], ig_creds, ig_budget, ig_cache)
+                    it["nombre"], it["municipio"], ig_creds,
+                    None if getattr(args, "ig_solo_cache", False) else ig_budget, ig_cache)
             it.update(instagram=url, ig_fuente=fuente, snippets=snippets)
             hechos += 1
             if hechos % 50 == 0 or hechos == len(sin_web):
@@ -338,6 +419,7 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
         fila = {
             **base,
             "es_tienda": es_tienda, "tecnologia": tecnologia,
+            "web_analizada": it["web"] if it["web_fuente"] != "maps" else "", "web_fuente": it["web_fuente"] if it["web"] else "",
             "tipo_negocio": c.tipo_negocio, "etiqueta": etiqueta_especial,
             "confianza": round(c.confianza, 2), "evidencias": evid_txt,
             "num_marcas": len(marcas) if sig else "", "marcas_detectadas": ", ".join(marcas[:40]),

@@ -110,16 +110,22 @@ def _md_cell(s) -> str:
 
 async def main() -> None:
     args = argparse.Namespace(brands_path=str(ROOT / "config" / "excluded_brands.json"),
-                              refresh=False, no_llm=False, dataforseo_max_usd=None)
+                              refresh=False, no_llm=False, dataforseo_max_usd=None,
+                              ig_solo_cache=True)  # Instagram: solo lo ya pagado
     creds = _dataforseo_creds()
     budget = DataForSeoBudget(default_max_usd()) if creds else None
     ICP_OUT.mkdir(exist_ok=True)
 
     resumen, salen, nuevos_p1, cadenas = [], [], [], []
+    fuentes = Counter()
     for name in FILES:
         rows = _dedup_rows(_read_csv(str(MAIN_OUT / f"{name}.csv")))
         old = _old_priorities(MAIN_OUT / f"{name}.xlsx")
+        # Búsqueda de web en Google solo para los que eran P1/P2 en la versión normal (decisión 2026-11-09).
+        p12 = {k for k, v in old.items() if v[0] in ("P1", "P2")}
+        args.buscar_web = lambda row, p12=p12: _key(row) in p12
         res = await analyze(rows, args, ig_budget=budget)
+        fuentes.update(r.get("web_fuente") or "sin web" for r in res)
         write_xlsx(str(ICP_OUT / f"{name}_icp.xlsx"), rows, res)
 
         prio = Counter(str(r["prioridad"]) for r in res)
@@ -143,7 +149,7 @@ async def main() -> None:
     pendientes = budget.pending if budget else 0
 
     L = [f"# Informe: nueva puntuación con el analizador ICP Multimarca",
-         "", f"Fecha: {date.today().isoformat()} · Versión ICP 0.9.10.x · DataForSEO gastado: ${gasto:.2f}"
+         "", f"Fecha: {date.today().isoformat()} · Versión ICP 0.9.10.x · DataForSEO gastado en esta ejecución: ${gasto:.2f}"
          + (f" (quedaron {pendientes} negocios sin web sin buscar por el límite de $1)" if pendientes else ""),
          "", "«Antes» es la prioridad del XLSX que ya existía junto a cada CSV, calculada con la versión normal.",
          "", "## Resumen por fichero", "",
@@ -157,6 +163,10 @@ async def main() -> None:
     tipos_tot = Counter()
     for *_, t in resumen:  # noqa: B007
         tipos_tot.update(t)
+    L += ["", "## De dónde sale la web analizada", "",
+          "«otro local»: web de otro local de la misma cadena. «google»: búsqueda «nombre municipio» "
+          "(solo para los que eran P1/P2 en la versión normal).", "", "| Origen | Negocios |", "|---|---|"]
+    L += [f"| {f} | {n} |" for f, n in fuentes.most_common()]
     L += ["", "## Tipos de negocio (todos los ficheros)", "", "| Tipo | Negocios |", "|---|---|"]
     L += [f"| {t} | {n} |" for t, n in tipos_tot.most_common()]
 
