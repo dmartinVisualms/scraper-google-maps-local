@@ -216,8 +216,11 @@ class SearchCache:
     def get(self, nombre: str, municipio: str) -> Optional[dict]:
         return self._data.get(self.key(nombre, municipio))
 
-    def put(self, nombre: str, municipio: str, url: str) -> None:
-        self._data[self.key(nombre, municipio)] = {"url": url, "ts": int(time.time())}
+    def put(self, nombre: str, municipio: str, url: str, snippets: Optional[list] = None) -> None:
+        entry = {"url": url, "ts": int(time.time())}
+        if snippets is not None:
+            entry["snippets"] = snippets
+        self._data[self.key(nombre, municipio)] = entry
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(self._data, ensure_ascii=False, indent=1), encoding="utf-8")
 
@@ -228,6 +231,15 @@ async def search_instagram_via_dataforseo(
     nombre: str, municipio: str, creds: tuple, timeout_s: int = 30,
 ) -> Tuple[Optional[str], float]:
     """Busca el perfil de IG. Devuelve (url_o_None, coste_usd). Coste 0 si falló la llamada."""
+    url, cost, _ = await search_instagram_serp(nombre, municipio, creds, timeout_s)
+    return url, cost
+
+
+async def search_instagram_serp(
+    nombre: str, municipio: str, creds: tuple, timeout_s: int = 30,
+) -> Tuple[Optional[str], float, list]:
+    """Como search_instagram_via_dataforseo, pero devuelve además los fragmentos de texto
+    de los resultados (bio y posts), que el analizador ICP usa con los negocios sin web."""
     import aiohttp
 
     nombre = (nombre or "").strip()
@@ -243,18 +255,41 @@ async def search_instagram_via_dataforseo(
             async with session.post(_DATAFORSEO_URL, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     LOGGER.warning("DataForSEO HTTP %d para '%s'", resp.status, query)
-                    return None, 0.0
+                    return None, 0.0, []
                 data = await resp.json()
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("DataForSEO error para '%s': %s", query, exc)
-        return None, 0.0
+        return None, 0.0, []
 
     tasks = data.get("tasks") or [{}]
     cost = float(tasks[0].get("cost") or data.get("cost") or 0.0)
     result = tasks[0].get("result") or [{}]
     items = (result[0] or {}).get("items") or []
     handle = handle_from_serp_items(items, nombre, municipio)
-    return (f"https://instagram.com/{handle}" if handle else None), cost
+    snippets = [
+        f"{(i.get('title') or '').strip()} — {(i.get('description') or '').strip()}"
+        for i in items if i.get("type") == "organic"
+    ][:10]
+    return (f"https://instagram.com/{handle}" if handle else None), cost, snippets
+
+
+async def resolve_instagram_with_snippets(
+    nombre: str, municipio: str, creds: Optional[tuple],
+    budget: Optional[DataForSeoBudget], cache: Optional[SearchCache] = None,
+) -> Tuple[str, str, list]:
+    """Para negocios sin web: (instagram_url, fuente, fragmentos). Reutiliza la caché
+    si ya tiene fragmentos; si solo tiene la URL (búsqueda de la versión normal), repite."""
+    if cache is not None:
+        hit = cache.get(nombre, municipio)
+        if hit is not None and "snippets" in hit:
+            return hit["url"], ("dataforseo" if hit["url"] else "-"), hit["snippets"]
+    if not creds or budget is None or not budget.can_spend():
+        return "", "-", []
+    found, cost, snippets = await search_instagram_serp(nombre, municipio, creds)
+    budget.charge(cost)
+    if cost > 0 and cache is not None:
+        cache.put(nombre, municipio, found or "", snippets)
+    return (found or ""), ("dataforseo" if found else "-"), snippets
 
 
 async def resolve_instagram(

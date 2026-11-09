@@ -1,0 +1,24 @@
+{
+  "_doc": "Listas para clasificar el tipo de negocio. 'multimarca_tipicas': marcas de terceros que suelen vender las tiendas multimarca de moda; su presencia en el catálogo es señal fuerte de multimarca. 'no_moda': marcas de perfumería, cosmética, higiene o joyería; si dominan el catálogo, el negocio no es de moda. Se comparan sin mayúsculas, acentos ni signos. Editable sin tocar código.",
+  "multimarca_tipicas": [
+    "Selected", "Jack & Jones", "JJXX", "Vila", "Object", "Pieces", "Only", "Vero Moda", "Name It",
+    "Salsa", "Ecoalf", "Silbon", "Helly Hansen", "Pepe Jeans", "Tommy Hilfiger", "Tommy Jeans",
+    "Calvin Klein", "Lacoste", "Levi's", "Skechers", "XTI", "Refresh", "Mustang", "Pikolinos",
+    "Geox", "Camper", "Victoria", "Kickers", "Gioseppo", "Wonders", "Hispanitas", "Callaghan",
+    "Fluchos", "Pablosky", "Garvalin", "Biomecanics", "Superga", "Converse", "Vans", "New Balance",
+    "Nike", "Adidas", "Puma", "Asics", "Joma", "Reebok", "The North Face", "Columbia", "Napapijri",
+    "Superdry", "Scotch & Soda", "Gant", "Hackett", "El Ganso", "Polo Ralph Lauren", "US Polo Assn",
+    "Tiffosi", "Dockers", "Lee", "Wrangler", "G-Star", "Diesel", "Guess", "Liu Jo", "Pinko",
+    "Desigual", "Naf Naf", "Kaotiko", "Compañía Fantástica", "Roka", "El Pulpo", "Mayoral",
+    "Boboli", "Tuc Tuc", "Losan", "Unique", "Eseoese", "Ucon Acrobatics", "Khujo", "Musbombon",
+    "Somos Oceano", "Eleonora", "Systemaction", "Replay", "Timberland", "Clarks", "Mephisto",
+    "Rieker", "Tamaris", "Marco Tozzi", "Unisa", "Alpe", "Mascaró", "Martinelli", "Lloyd's"
+  ],
+  "no_moda": [
+    "Lancome", "L'Oreal", "Biotherm", "Clinique", "Estee Lauder", "Max Factor", "Revlon", "OPI",
+    "Elizabeth Arden", "Shiseido", "Sisley", "Clarins", "Collistar", "Maybelline", "Rimmel", "NYX",
+    "Bourjois", "Vichy", "La Roche-Posay", "Tampax", "Ausonia", "Freshly Cosmetics", "Revolution",
+    "Dermocracy", "Cacharel", "Chloe", "Rabanne", "Paco Rabanne", "Lancôme", "Pandora", "Swarovski",
+    "Nivea", "Garnier", "Avène", "Isdin", "Kiko", "Essence", "Catrice", "Loewe Perfumes"
+  ]
+}
