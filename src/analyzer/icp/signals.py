@@ -49,6 +49,7 @@ _SECTOR = {
     "joyeria": ["joyer", "relojer", "oro de ley", "plata de ley", "quilates"],
     "optica": ["óptica", "gafas graduadas", "lentillas", "audiología"],
     "hogar": ["decoración", "menaje", "textil hogar", "sábanas", "edredón"],
+    "salud": ["ortoped", "parafarmacia", "farmacia", "audífono", "silla de ruedas", "fisioterapia", "geriátric"],
 }
 _SUBSECTOR = {
     "calzado": ["zapat", "calzado", "botas", "sandalia", "sneaker", "zapatilla", "mocasín"],

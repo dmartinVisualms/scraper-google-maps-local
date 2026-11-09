@@ -54,16 +54,36 @@ def _ev(texto: str, url: str = "") -> str:
     return f"{texto} ({url})" if url else texto
 
 
+# Si el título de la web nombra uno de estos sectores, el negocio no es de moda
+# aunque venda calzado o ropa (p. ej. una ortopedia con 57 marcas).
+_TITULO_NO_MODA = ["ortopedia", "farmacia", "optica", "perfumeria", "joyeria", "relojeria",
+                   "drogueria", "guarderia", "jugueteria", "puericultura"]
+CADENA_MIN = 8  # locales a partir de los cuales es una cadena, fuera de esta campaña
+
+
+def _cadena(n: int, fuente: str, url: str = "") -> Clasificacion:
+    return Clasificacion("marca_propia", 0.75, [_ev(
+        f"cadena: {n} tiendas con el mismo nombre {fuente} y ninguna marca de terceros en su web", url)])
+
+
 def classify(sig: Optional[Signals], nombre: str, cfg: dict,
-             excluded_brands: Optional[List[str]] = None) -> Clasificacion:
+             excluded_brands: Optional[List[str]] = None, n_tiendas_dataset: int = 0) -> Clasificacion:
+    """`n_tiendas_dataset`: locales con el mismo nombre en el CSV; se usa cuando la web no
+    muestra marcas ni página de tiendas (cadenas como Pilar Prieto o Punt Roma)."""
     excluded = [b for b in (excluded_brands or []) if norm(b) and norm(b) in norm(nombre)]
     if excluded:
         return Clasificacion("franquiciado_monomarca", 0.9, [f"nombre coincide con la cadena «{excluded[0]}»"])
 
     if sig is None or not sig.ok:
+        if n_tiendas_dataset >= CADENA_MIN:
+            return _cadena(n_tiendas_dataset, "en el dataset (sin web)")
         return Clasificacion("dudoso", 0.3, ["sin web accesible"])
 
     url = sig.final_url
+    titulo = norm(sig.title)
+    sector_titulo = next((t for t in _TITULO_NO_MODA if norm(t) in titulo), None)
+    if sector_titulo:
+        return Clasificacion("no_moda", 0.85, [_ev(f"el título de la web es de {sector_titulo}: «{sig.title[:80]}»", url)])
     tipicas = {norm(x) for x in cfg.get("multimarca_tipicas", [])}
     no_moda_set = {norm(x) for x in cfg.get("no_moda", [])}
 
@@ -101,6 +121,9 @@ def classify(sig: Optional[Signals], nombre: str, cfg: dict,
         if n_tiendas:
             ev.append(_ev(f"{n_tiendas} tiendas propias en {len(sig.provincias)} provincias y ninguna marca de terceros", sig.tiendas_url))
         return Clasificacion("marca_propia", 0.85 if (solo_propia or sig.propia_fuerte) else 0.75, ev)
+
+    if not terceros and n_tiendas_dataset >= CADENA_MIN:
+        return _cadena(n_tiendas_dataset, "en el dataset", url)
 
     if terceros:
         return Clasificacion("dudoso", 0.5, [_ev(f"solo {len(terceros)} marcas de terceros: {', '.join(terceros)}", sig.marcas_url)])

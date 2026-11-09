@@ -80,3 +80,18 @@ def test_llm_con_confianza_alta_sustituye_a_reglas():
     reglas = classify(None, "Tienda X", CFG)
     final = llm.merge(reglas, llm.Clasificacion("multimarca", 0.9, ["etiqueta @vila y @object"], "llm"))
     assert final.tipo_negocio == "multimarca" and final.fuente == "llm"
+
+
+def test_titulo_no_moda_gana_al_catalogo():
+    from src.analyzer.icp.signals import Signals
+    sig = Signals(web="x", final_url="https://ortopedia.x.com/", ok=True, title="Ortopedia y eliminación de barreras",
+                  marcas=[f"Marca {i}" for i in range(57)], num_tiendas_web=10, sector_real="moda")
+    assert classify(sig, "Centros Ortopédicos", CFG).tipo_negocio == "no_moda"
+
+
+def test_cadena_sin_marcas_por_recuento_del_dataset():
+    from src.analyzer.icp.signals import Signals
+    sig = Signals(web="x", final_url="https://pilarprieto.es/", ok=True, title="Tienda online de moda mujer", sector_real="moda")
+    assert classify(sig, "Pilar Prieto", CFG, n_tiendas_dataset=17).tipo_negocio == "marca_propia"
+    assert classify(sig, "O'ruan", CFG, n_tiendas_dataset=5).tipo_negocio == "dudoso"
+    assert classify(None, "Merkal Calzados", CFG, n_tiendas_dataset=9).tipo_negocio == "marca_propia"

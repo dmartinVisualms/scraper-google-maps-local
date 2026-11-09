@@ -229,7 +229,8 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
         sig = _signals_from(entry)
         es_cliente = norm(nombre).replace(" ", "") in clientes or any(c and c in norm(nombre).replace(" ", "") for c in clientes)
         clas = (Clasificacion("cliente_velfix", 1.0, ["está en config/clientes_velfix.json"])
-                if es_cliente else classify(sig, nombre, marcas_cfg))
+                if es_cliente else classify(sig, nombre, marcas_cfg,
+                                            n_tiendas_dataset=num_tiendas_for(nombre, brand_counts, municipio)))
         item = {"i": i, "row": row, "nombre": nombre, "municipio": municipio, "web": web,
                 "host": host, "entry": entry, "sig": sig, "clas": clas,
                 "instagram": (entry or {}).get("instagram", ""), "ig_fuente": "web" if (entry or {}).get("instagram") else "-",
