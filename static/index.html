@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Google Maps Scraper</title>
+  <title>ICP · Scraper</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -75,7 +75,7 @@
       transition: border-color 0.15s;
       width: 100%;
     }
-    input:focus, select:focus, textarea:focus { border-color: #6366f1; }
+    input:focus, select:focus, textarea:focus { border-color: #f59e0b; }
     textarea { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.8rem; resize: vertical; }
 
     .actions {
@@ -97,8 +97,8 @@
     }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-    #btn-run   { background: #6366f1; color: #fff; }
-    #btn-run:not(:disabled):hover   { background: #4f46e5; }
+    #btn-run   { background: #f59e0b; color: #fff; }
+    #btn-run:not(:disabled):hover   { background: #d97706; }
     #btn-clear { background: #2d3148; color: #94a3b8; }
     #btn-clear:hover { background: #374162; }
     #btn-dl    { background: #10b981; color: #fff; display: none; }
@@ -182,7 +182,7 @@
     .line.WARNING { color: #f59e0b; }
     .line.ERROR   { color: #f87171; }
     .line.DEBUG   { color: #64748b; }
-    .line.ZONE    { color: #818cf8; font-weight: 600; }
+    .line.ZONE    { color: #fbbf24; font-weight: 600; }
     .line.SUCCESS { color: #34d399; font-weight: 600; }
 
     #log::-webkit-scrollbar { width: 6px; }
@@ -191,7 +191,9 @@
   </style>
 </head>
 <body>
-  <h1>Google Maps Scraper <span style="font-size:0.55em; color:#64748b; font-weight:500; vertical-align:middle;">v0.9.10</span></h1>
+  <div style="position:fixed; top:0; left:0; right:0; height:6px; background:#f59e0b; z-index:1000;"></div>
+  <div style="position:fixed; top:6px; right:12px; background:#f59e0b; color:#1c1917; font-size:0.7rem; font-weight:700; letter-spacing:0.06em; padding:2px 8px; border-radius:0 0 6px 6px; z-index:1000;">ICP MULTIMARCA · :8001</div>
+  <h1>Google Maps Scraper <span style="font-size:0.55em; color:#64748b; font-weight:500; vertical-align:middle;">v0.9.10.1 · Versión Especial ICP Multimarca</span></h1>
 
   <div class="card">
     <form id="form">
@@ -252,7 +254,7 @@
         </label>
         <label class="full scraper-only" style="flex-direction:row; align-items:center; gap:0.6rem; cursor:pointer;">
           <input type="checkbox" name="adaptive_subdivision" value="true" checked
-                 style="width:auto; accent-color:#6366f1; width:1rem; height:1rem;" />
+                 style="width:auto; accent-color:#f59e0b; width:1rem; height:1rem;" />
           <span>Subdivisión adaptativa</span>
           <small style="color:#4b5563; text-transform:none; font-weight:400; font-size:0.75rem; margin-left:0.25rem">
             (subdivide sectores con alta densidad recursivamente)
