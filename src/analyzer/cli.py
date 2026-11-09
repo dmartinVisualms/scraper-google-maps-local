@@ -234,11 +234,29 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
                 "host": host, "entry": entry, "sig": sig, "clas": clas,
                 "instagram": (entry or {}).get("instagram", ""), "ig_fuente": "web" if (entry or {}).get("instagram") else "-",
                 "snippets": []}
-        # Sin web propia (vacía o solo un enlace a Instagram/Facebook): fragmentos de Instagram.
-        if (not web or is_social_url(web)) and not es_cliente:
-            url, fuente, snippets = await resolve_instagram_with_snippets(nombre, municipio, ig_creds, ig_budget, ig_cache)
-            item.update(instagram=url, ig_fuente=fuente, snippets=snippets)
+        item["sin_web"] = (not web or is_social_url(web)) and not es_cliente
         items.append(item)
+
+    # Sin web propia (vacía o solo un enlace a Instagram/Facebook): fragmentos de Instagram.
+    # 5 búsquedas a la vez (de una en una eran ~11 s cada una). ponytail: el límite de gasto
+    # se comprueba antes de cada búsqueda, así que puede pasarse como mucho en 4 búsquedas (~$0,01).
+    sin_web = [it for it in items if it["sin_web"]]
+    if sin_web:
+        LOGGER.info("Instagram: %d negocios sin web", len(sin_web))
+        sem = asyncio.Semaphore(5)
+        hechos = 0
+
+        async def buscar(it: dict) -> None:
+            nonlocal hechos
+            async with sem:
+                url, fuente, snippets = await resolve_instagram_with_snippets(
+                    it["nombre"], it["municipio"], ig_creds, ig_budget, ig_cache)
+            it.update(instagram=url, ig_fuente=fuente, snippets=snippets)
+            hechos += 1
+            if hechos % 50 == 0 or hechos == len(sin_web):
+                LOGGER.info("Instagram: %d/%d", hechos, len(sin_web))
+
+        await asyncio.gather(*(buscar(it) for it in sin_web))
 
     # ── C. LLM para dudosos ──
     casos, by_id = [], {}
