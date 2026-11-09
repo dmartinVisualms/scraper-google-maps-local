@@ -177,7 +177,7 @@ async def analyze_page(job_id: str) -> HTMLResponse:
 
 
 @app.post("/run-analyze/{job_id}")
-async def run_analyze(job_id: str) -> dict:
+async def run_analyze(job_id: str, max_usd: Optional[float] = None) -> dict:
     job = jobs.get(job_id)
     if not job:
         return {"error": "job not found"}
@@ -199,6 +199,8 @@ async def run_analyze(job_id: str) -> dict:
         "--csv-path", csv_output,
         "--brands-path", "config/excluded_brands.json",
     ]
+    if max_usd is not None:
+        cmd += ["--dataforseo-max-usd", str(max_usd)]
 
     async def run() -> None:
         proc = await asyncio.create_subprocess_exec(

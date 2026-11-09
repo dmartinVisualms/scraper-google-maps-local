@@ -14,7 +14,9 @@ import openpyxl
 from src.analyzer.brand_filter import is_excluded, load_brands
 from src.analyzer.email_extract import get_email
 from src.analyzer.fingerprint import detect_platform, fetch_page, is_social_url
-from src.analyzer.instagram import DataForSeoBudget, _dataforseo_creds, resolve_instagram
+from src.analyzer.instagram import (
+    DataForSeoBudget, SearchCache, _dataforseo_creds, default_max_usd, resolve_instagram,
+)
 from src.analyzer.scoring import (
     compute_score,
     coords_from_maps_url,
@@ -43,6 +45,10 @@ _ANALYSIS_DROP = {"rating", "source_query", "retrieved_at_utc", "maps_url", "lat
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Google Maps Scraper — Analyzer")
     parser.add_argument("--csv-path", required=True, help="Ruta al CSV de entrada")
+    parser.add_argument(
+        "--dataforseo-max-usd", type=float, default=None,
+        help="Gasto máximo en DataForSEO por ejecución (USD). Default: DATAFORSEO_MAX_USD_PER_RUN o 1.0",
+    )
     parser.add_argument(
         "--brands-path",
         default="config/excluded_brands.json",
@@ -111,9 +117,11 @@ async def _run(args: argparse.Namespace) -> None:
 
     # Instagram fallback vía DataForSEO: se activa solo si hay credenciales.
     ig_creds = _dataforseo_creds()
-    ig_budget = DataForSeoBudget() if ig_creds else None
+    max_usd = args.dataforseo_max_usd if args.dataforseo_max_usd is not None else default_max_usd()
+    ig_budget = DataForSeoBudget(max_usd) if ig_creds else None
+    ig_cache = SearchCache()
     if ig_creds:
-        LOGGER.info("Instagram fallback: DataForSEO ACTIVO (cap=%d queries)", ig_budget.cap)
+        LOGGER.info("Instagram fallback: DataForSEO ACTIVO (límite $%.2f por ejecución)", max_usd)
     else:
         LOGGER.info(
             "Instagram fallback: solo extracción de HTML "
@@ -190,7 +198,7 @@ async def _run(args: argparse.Namespace) -> None:
         # Instagram: primero HTML del negocio; si no, DataForSEO (si hay creds)
         instagram, ig_fuente = await resolve_instagram(
             html=html, nombre=nombre, municipio=municipio,
-            creds=ig_creds, budget=ig_budget,
+            creds=ig_creds, budget=ig_budget, cache=ig_cache,
         )
 
         metrics["analyzed"] += 1
@@ -251,6 +259,14 @@ async def _run(args: argparse.Namespace) -> None:
         ig_from_web, ig_from_dfs, ig_none,
         elapsed,
     )
+    if ig_budget is not None:
+        LOGGER.info("DataForSEO: gastado $%.2f de $%.2f", ig_budget.spent, ig_budget.max_usd)
+        if ig_budget.pending:
+            # La UI lee esta línea para ofrecer ampliar el límite y relanzar.
+            LOGGER.warning(
+                "IGBUDGET spent=%.2f cap=%.2f pending=%d est=%.2f",
+                ig_budget.spent, ig_budget.max_usd, ig_budget.pending, ig_budget.estimated_extra_usd,
+            )
     _emit_stats(metrics)
 
 

@@ -269,6 +269,11 @@
       <strong style="color:#64748b;">Sin web/Error</strong>: negocios sin web, con web de red social (Instagram/Facebook), o cuya web no fue accesible (timeout, error HTTP).
     </p>
 
+    <div id="ig-budget" style="display:none; margin-top:1rem; padding:0.8rem 1rem; border:1px solid #92400e; background:#2a1a08; border-radius:8px; font-size:0.85rem; color:#fcd34d;">
+      <div id="ig-budget-text"></div>
+      <button id="btn-ig-more" style="margin-top:0.6rem; background:#b45309; color:#fff;">Ampliar límite y continuar</button>
+    </div>
+
     <div class="log-wrapper">
       <div class="log-header">
         <span>Log</span>
@@ -345,6 +350,16 @@
       return 'INFO';
     }
 
+    let igBudget = null;
+    function tryParseBudget(text) {
+      const m = text.match(/IGBUDGET spent=([\d.]+) cap=([\d.]+) pending=(\d+) est=([\d.]+)/);
+      if (!m) return;
+      igBudget = { spent: +m[1], cap: +m[2], pending: +m[3], est: +m[4] };
+      document.getElementById('ig-budget-text').textContent =
+        `Se alcanzó el límite de $${igBudget.cap.toFixed(2)} de DataForSEO. Quedan ${igBudget.pending} negocios sin buscar en Instagram (~$${igBudget.est.toFixed(2)} más). Las búsquedas ya hechas están en caché y no se vuelven a pagar.`;
+      document.getElementById('ig-budget').style.display = 'block';
+    }
+
     function tryParseStats(text) {
       const m = text.match(/ASTATS filtered=(\d+)\s+analyzed=(\d+)\s+stores=(\d+)\s+errors=(\d+)/);
       if (m) {
@@ -364,6 +379,7 @@
       lineCount.textContent = `${lineNum} línea${lineNum !== 1 ? 's' : ''}`;
       logEl.scrollTop = logEl.scrollHeight;
       tryParseStats(text);
+      tryParseBudget(text);
     }
 
     function setStatus(status) {
@@ -374,7 +390,16 @@
       badge.style.display = 'inline-block';
     }
 
-    btnRun.addEventListener('click', async () => {
+    document.getElementById('btn-ig-more').addEventListener('click', () => {
+      if (!igBudget) return;
+      const extra = Math.ceil(igBudget.est * 100) / 100;
+      if (!confirm(`¿Autorizas gastar hasta $${extra.toFixed(2)} más de DataForSEO para buscar el Instagram de ${igBudget.pending} negocios?`)) return;
+      startAnalysis(extra);
+    });
+
+    btnRun.addEventListener('click', () => startAnalysis(null));
+
+    async function startAnalysis(maxUsd) {
       if (es) { es.close(); es = null; }
       btnRun.disabled = true;
       btnDl.style.display = 'none';
@@ -386,7 +411,10 @@
       document.getElementById('stats-note').style.display = 'block';
       setStatus('running');
 
-      await fetch(`/run-analyze/${jobId}`, { method: 'POST' });
+      document.getElementById('ig-budget').style.display = 'none';
+      igBudget = null;
+      const qs = maxUsd !== null ? `?max_usd=${maxUsd}` : '';
+      await fetch(`/run-analyze/${jobId}${qs}`, { method: 'POST' });
 
       es = new EventSource(`/analyze-stream/${jobId}`);
       es.onmessage = (ev) => appendLine(ev.data);
@@ -409,9 +437,9 @@
         btnRun.disabled = false;
         setStatus('error');
       };
-    });
+    }
 
-    const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+    const esc =s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
     const fmt = (n, cap = Infinity) => n >= cap ? '∞' : Number(n).toLocaleString('es-ES');
     const CRIT_LABELS = {
       distancia_eci: 'Distancia al El Corte Inglés más cercano',

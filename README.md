@@ -1,4 +1,4 @@
-# Google Maps Scraper `v0.9.9`
+# Google Maps Scraper `v0.9.10`
 
 Scraper de negocios de Google Maps con interfaz web integrada. Extrae nombre, teléfono, dirección, web, valoración y categoría de los resultados de búsqueda y los exporta a CSV.
 
@@ -165,17 +165,17 @@ El analizador añade dos columnas a la pestaña Análisis:
 - **`instagram`** — URL del perfil (`https://instagram.com/<handle>`) o vacío.
 - **`instagram_fuente`** — `web` (extraído del HTML del negocio), `dataforseo` (encontrado por búsqueda en Google vía SERP API), o `-` (no localizado).
 
-Flujo: primero se parsea el HTML ya descargado para fingerprint buscando enlaces a `instagram.com/<handle>` (filtrando rutas reservadas como `/p/`, `/reel/`, etc.). Si no aparece ninguno, se consulta **DataForSEO SERP API** con la query `site:instagram.com "<nombre>" "<municipio>"`.
+Flujo: primero se parsea el HTML ya descargado para fingerprint buscando enlaces a `instagram.com/<handle>` (filtrando rutas reservadas como `/p/`, `/reel/`, etc.). Si no aparece ninguno, se consulta **DataForSEO SERP API** con la query `site:instagram.com "<nombre>" "<municipio>"`. Google devuelve los enlaces cifrados, así que el usuario se lee del título del resultado de perfil (`Nombre (@usuario) - Instagram`) y solo se acepta si coincide con el nombre del negocio.
 
 El fallback SERP se activa solo si hay credenciales en `.env`:
 
 ```
 DATAFORSEO_LOGIN=tu_email@cuenta.com
 DATAFORSEO_PASSWORD=tu_api_password
-DATAFORSEO_MAX_PER_RUN=500   # cap de seguridad por ejecución
+DATAFORSEO_MAX_USD_PER_RUN=1   # gasto máximo por ejecución, en USD
 ```
 
-Coste: endpoint `/serp/google/organic/live/regular` → $2 / 1000 queries (≈2-3s latencia por búsqueda). Signup con depósito mínimo $50 en https://dataforseo.com/. Sin credenciales el analizador funciona igual pero sin fallback (solo extracción de HTML).
+Coste medido: **$0,01 por búsqueda** (endpoint `/serp/google/organic/live/regular`). Al llegar al límite, el analizador deja de buscar y la página del analizador muestra cuántos negocios quedan y cuánto costaría seguir, con un botón para ampliar el límite tras confirmarlo. Las búsquedas ya pagadas se guardan en `cache/instagram_search.json` y no se repiten. Sin credenciales el analizador funciona igual pero sin fallback (solo extracción de HTML).
 
 ### Avatares comerciales por defecto
 
