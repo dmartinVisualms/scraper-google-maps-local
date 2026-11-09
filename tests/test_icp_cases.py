@@ -95,3 +95,10 @@ def test_cadena_sin_marcas_por_recuento_del_dataset():
     assert classify(sig, "Pilar Prieto", CFG, n_tiendas_dataset=17).tipo_negocio == "marca_propia"
     assert classify(sig, "O'ruan", CFG, n_tiendas_dataset=5).tipo_negocio == "dudoso"
     assert classify(None, "Merkal Calzados", CFG, n_tiendas_dataset=9).tipo_negocio == "marca_propia"
+
+
+def test_titulo_con_moda_no_se_descarta_por_titulo():
+    from src.analyzer.icp.signals import Signals
+    sig = Signals(web="x", final_url="https://mamagallina.es/", ok=True,
+                  title="Mama Gallina - Puericultura y moda infantil en Redondela", sector_real="moda")
+    assert classify(sig, "Mama Gallina", CFG).tipo_negocio != "no_moda"

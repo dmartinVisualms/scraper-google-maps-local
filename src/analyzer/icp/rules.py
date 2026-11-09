@@ -81,7 +81,9 @@ def classify(sig: Optional[Signals], nombre: str, cfg: dict,
 
     url = sig.final_url
     titulo = norm(sig.title)
-    sector_titulo = next((t for t in _TITULO_NO_MODA if norm(t) in titulo), None)
+    # Si el título también habla de moda ("Puericultura y moda infantil"), no basta.
+    habla_de_moda = any(w in titulo for w in ("moda", "ropa", "calzado", "zapateria"))
+    sector_titulo = None if habla_de_moda else next((t for t in _TITULO_NO_MODA if norm(t) in titulo), None)
     if sector_titulo:
         return Clasificacion("no_moda", 0.85, [_ev(f"el título de la web es de {sector_titulo}: «{sig.title[:80]}»", url)])
     tipicas = {norm(x) for x in cfg.get("multimarca_tipicas", [])}
