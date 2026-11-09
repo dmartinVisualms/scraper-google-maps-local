@@ -21,3 +21,14 @@ def test_etiqueta_cadena_por_recuento_y_por_lista():
     assert by["Courir"]["etiqueta"].startswith("CADENA")
     assert by["Tienda Única"]["etiqueta"] == ""
     assert all(r["prioridad"] != "P1" for r in out if r["etiqueta"])
+
+
+def test_agrupar_cadenas_une_variantes():
+    from scripts.icp_rescore_report import agrupar_cadenas
+    r = lambda n, m, w="": {"nombre": n, "municipio_origen": m, "web": w}
+    rows = [r("Muchas Noia", "Noia", "http://bit.ly/3olfSTb"), r("Muchas Burela", "Burela", "http://bit.ly/3olfSTb"),
+            r("Merkal Calzados", "Lugo", "https://www.merkal.com/"), r("MERKAL CALZADOS", "Vigo", "http://merkal.com/"),
+            r("Merkal Calzados S.L.", "Ourense"), r("Miss Tic", "Lugo"), r("Miss-tic Xinzo", "Xinzo de Limia"),
+            r("Calzados", "Lugo"), r("Calzados", "Vigo")]
+    tam = sorted(len(g) for g in agrupar_cadenas(rows))
+    assert tam == [1, 1, 2, 2, 3], tam  # 'Calzados' genérico no une

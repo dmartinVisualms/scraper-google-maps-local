@@ -11,13 +11,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import random
+import re
 from collections import Counter
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlparse
 
 import openpyxl
 
 from src.analyzer.cli import _dedup_rows, _read_csv, analyze, write_xlsx
+from src.analyzer.scoring import _GENERIC_BRAND_WORDS, _brand_key
 from src.analyzer.instagram import DataForSeoBudget, _dataforseo_creds, default_max_usd
 from src.utils.logging import setup_logging
 
@@ -54,6 +57,53 @@ def _old_priorities(xlsx: Path) -> dict:
     return d
 
 
+_SIN_DOMINIO = {"instagram.com", "facebook.com", "bit.ly", "linktr.ee", "google.com", "wa.me", "goo.gl"}
+
+
+def _dominio(web: str) -> str:
+    host = urlparse(web if "//" in web else f"http://{web}").hostname or ""
+    dom = ".".join(host.split(".")[-2:])
+    if not dom or dom in _SIN_DOMINIO:
+        return web.split("?")[0].lower()  # acortadores y redes: la URL entera
+    return dom
+
+
+def agrupar_cadenas(rows: list) -> list:
+    """Une locales de la misma cadena: mismo dominio web, o mismo nombre sin municipio,
+    o un nombre que empieza por el de otra cadena ('Muchas Noia' → 'Muchas').
+    ponytail: union-find de 10 líneas; los nombres genéricos ('calzados') no unen nada."""
+    padre = list(range(len(rows)))
+
+    def raiz(i):
+        while padre[i] != i:
+            padre[i] = padre[padre[i]]
+            i = padre[i]
+        return i
+
+    def unir(i, j):
+        padre[raiz(i)] = raiz(j)
+
+    primero = {}
+    claves = [_brand_key(r["nombre"], r.get("municipio_origen") or "") for r in rows]
+    for i, r in enumerate(rows):
+        ks = [f"w:{_dominio(r['web'])}"] if (r.get("web") or "").strip() else []
+        if claves[i] and not set(claves[i].split()) <= _GENERIC_BRAND_WORDS:
+            ks.append(f"n:{claves[i]}")
+        for k in ks:
+            unir(i, primero.setdefault(k, i))
+    for i, k in enumerate(claves):  # prefijos: 'muchas noia' con 'muchas'
+        toks = k.split()
+        for n in range(1, len(toks)):
+            j = primero.get("n:" + " ".join(toks[:n]))
+            if j is not None:
+                unir(i, j)
+                break
+    grupos = {}
+    for i, r in enumerate(rows):
+        grupos.setdefault(raiz(i), []).append(r)
+    return sorted(grupos.values(), key=len, reverse=True)
+
+
 def _md_cell(s) -> str:
     return str(s if s is not None else "").replace("|", "/").replace("\n", " ")[:160]
 
@@ -65,7 +115,7 @@ async def main() -> None:
     budget = DataForSeoBudget(default_max_usd()) if creds else None
     ICP_OUT.mkdir(exist_ok=True)
 
-    resumen, salen, nuevos_p1, cadenas = [], [], [], {}
+    resumen, salen, nuevos_p1, cadenas = [], [], [], []
     for name in FILES:
         rows = _dedup_rows(_read_csv(str(MAIN_OUT / f"{name}.csv")))
         old = _old_priorities(MAIN_OUT / f"{name}.xlsx")
@@ -78,12 +128,7 @@ async def main() -> None:
         n_cad = sum(1 for r in res if r.get("etiqueta"))
         resumen.append((name, len(rows), p1_antes, prio.get("P1", 0), tipos.get("multimarca", 0),
                         prio.get("descartado", 0), prio.get("revision", 0), n_cad, tipos))
-        for r in res:
-            if r.get("etiqueta"):
-                c = cadenas.setdefault(r["nombre"].strip(), {"etiqueta": r["etiqueta"], "tipos": Counter(),
-                                                             "prios": Counter(), "web": r.get("web") or ""})
-                c["tipos"][r["tipo_negocio"]] += 1
-                c["prios"][str(r["prioridad"])] += 1
+        cadenas += [r for r in res if r.get("etiqueta")]
         for r in res:
             antes = old.get(_key(r), (None, None))
             if antes[0] == "P1" and r["prioridad"] != "P1":
@@ -91,6 +136,7 @@ async def main() -> None:
             if r["prioridad"] == "P1" and antes[0] != "P1":
                 nuevos_p1.append((name, r, antes))
 
+    grupos = agrupar_cadenas(cadenas)
     random.seed(42)
     muestra = random.sample(nuevos_p1, min(10, len(nuevos_p1)))
     gasto = budget.spent if budget else 0.0
@@ -114,14 +160,20 @@ async def main() -> None:
     L += ["", "## Tipos de negocio (todos los ficheros)", "", "| Tipo | Negocios |", "|---|---|"]
     L += [f"| {t} | {n} |" for t, n in tipos_tot.most_common()]
 
-    L += ["", f"## Cadenas (etiqueta CADENA): {len(cadenas)} nombres", "",
+    L += ["", f"## Cadenas (etiqueta CADENA): {len(grupos)} cadenas, {len(cadenas)} locales", "",
           "Negocios con 8 o más tiendas (en su web o en el CSV) o en config/cadenas.json. Nunca pasan de P2, "
-          "pero pueden ser objetivo. Se agrupan por nombre.", "",
+          "pero pueden ser objetivo. Se agrupan por dominio web y por nombre sin municipio "
+          "(«Muchas Noia» y «Muchas Burela» van juntas).", "",
           "| Cadena | Etiqueta | Locales en los CSV | Tipo | Prioridad | Web |", "|---|---|---|---|---|---|"]
-    for nom, c in sorted(cadenas.items(), key=lambda kv: -sum(kv[1]["tipos"].values())):
-        L.append(f"| {_md_cell(nom)} | {c['etiqueta']} | {sum(c['tipos'].values())} | "
-                 f"{', '.join(t for t, _ in c['tipos'].most_common(2))} | "
-                 f"{', '.join(f'{p} ({n})' for p, n in c['prios'].most_common(3))} | {_md_cell(c['web'])} |")
+    for g in grupos:
+        tipos = Counter(r["tipo_negocio"] for r in g)
+        prios = Counter(str(r["prioridad"]) for r in g)
+        nombre = Counter(r["nombre"].strip() for r in g).most_common(1)[0][0]
+        etiqueta = max((r["etiqueta"] for r in g), key=lambda e: int(re.sub(r"\D", "", e) or 0))
+        web = next((r.get("web") for r in g if r.get("web")), "")
+        L.append(f"| {_md_cell(nombre)} | {etiqueta} | {len(g)} | "
+                 f"{', '.join(t for t, _ in tipos.most_common(2))} | "
+                 f"{', '.join(f'{p} ({n})' for p, n in prios.most_common(3))} | {_md_cell(web)} |")
 
     L += ["", f"## Los que salen de P1 ({len(salen)})", "",
           "| Negocio | Municipio | Fichero | Antes | Ahora | Tipo | Evidencia principal |",
