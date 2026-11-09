@@ -106,12 +106,23 @@ def _brand_key(name: str, municipio: str = "") -> str:
     pero una misma cadena en varios municipios sí agrupa ('Lolitamoda Noia' y
     'Lolitamoda Boiro' → 'lolitamoda'). Sustituye al antiguo criterio de
     'primera palabra', que sobre-contaba (toda zapatería empezaba por 'calzado')."""
-    norm = normalize_brand_key(name)
+    from unidecode import unidecode
+
+    norm = unidecode(normalize_brand_key(name))
     if not norm:
         return ""
-    muni_tokens = set(normalize_brand_key(municipio).split())
+    muni_tokens = set(unidecode(normalize_brand_key(municipio)).split())
     tokens = [w for w in norm.split() if w not in muni_tokens]
     return " ".join(tokens) or norm
+
+
+# Palabras que por sí solas no identifican una marca: una clave hecha solo de ellas
+# ("calzados", "moda") no puede absorber a otras ("calzados raquel").
+_GENERIC_BRAND_WORDS = {
+    "calzados", "calzado", "zapateria", "zapaterias", "moda", "modas", "boutique", "tienda",
+    "tiendas", "ropa", "deportes", "sport", "sports", "outlet", "kids", "infantil", "shop",
+    "store", "the", "la", "el", "los", "las", "de", "y",
+}
 
 
 def count_stores_by_brand(
@@ -119,14 +130,29 @@ def count_stores_by_brand(
     name_field: str = "nombre",
     muni_field: str = "municipio_origen",
 ) -> Dict[str, int]:
-    """Devuelve {clave_marca: nº de filas con esa clave}."""
-    counts: Dict[str, int] = {}
+    """Devuelve {clave_marca: nº de tiendas de esa marca}.
+
+    Une las claves que solo añaden un sufijo de lugar a una marca ya repetida:
+    'muchas xinzo' y 'dandara vilagarcia arousa' cuentan con 'muchas' y 'dandara'
+    (el municipio del dataset va en castellano y el nombre a veces en gallego)."""
+    raw: Dict[str, int] = {}
     for r in rows:
         key = _brand_key(r.get(name_field, ""), r.get(muni_field, "") or "")
-        if not key:
-            continue
-        counts[key] = counts.get(key, 0) + 1
-    return counts
+        if key:
+            raw[key] = raw.get(key, 0) + 1
+
+    def root(key: str) -> str:
+        toks = key.split()
+        for n in range(1, len(toks)):
+            prefix = " ".join(toks[:n])
+            if raw.get(prefix, 0) >= 2 and not set(toks[:n]) <= _GENERIC_BRAND_WORDS:
+                return prefix
+        return key
+
+    totals: Dict[str, int] = {}
+    for key, n in raw.items():
+        totals[root(key)] = totals.get(root(key), 0) + n
+    return {key: totals[root(key)] for key in raw}
 
 
 def num_tiendas_for(name: str, brand_counts: Dict[str, int], municipio: str = "") -> int:
@@ -157,6 +183,21 @@ def score_poblacion(poblacion: int, weights: Dict) -> Tuple[int, str]:
 def score_num_tiendas(n: int, weights: Dict) -> Tuple[int, str]:
     bands = weights["criterios"]["num_tiendas"]["bandas"]
     return _band_score(n, bands, "min", "max")
+
+
+def score_encaje_multimarca(
+    num_marcas: Optional[int], n_tipicas: int, weights: Dict,
+) -> Tuple[int, str]:
+    """Puntos por amplitud del catálogo de marcas de terceros. num_marcas=None significa
+    que el negocio se clasificó como multimarca sin catálogo visible (p. ej. por Instagram)."""
+    cfg = weights["criterios"]["encaje_multimarca"]
+    if num_marcas is None:
+        return int(cfg.get("sin_catalogo", 0)), "multimarca sin catálogo visible"
+    pts, label = _band_score(num_marcas, cfg["bandas"], "min", "max")
+    if n_tipicas:
+        pts = min(int(cfg["peso_max"]), pts + int(cfg.get("extra_marcas_tipicas", 0)))
+        label += f" + {n_tipicas} marcas típicas de multimarca"
+    return pts, label
 
 
 def score_madurez_digital(
@@ -284,13 +325,20 @@ def compute_score(
     breakdown["madurez_digital"] = {"puntos": pts_m, "valor": madurez, "etiqueta": et_m}
     justif_parts.append(f"madurez={et_m} [{pts_m}pts]")
 
+    # Encaje multimarca (solo si la config de la campaña lo define)
+    pts_mm = 0
+    if "encaje_multimarca" in weights["criterios"]:
+        pts_mm, et_mm = score_encaje_multimarca(ctx.get("num_marcas"), int(ctx.get("n_tipicas") or 0), weights)
+        breakdown["encaje_multimarca"] = {"puntos": pts_mm, "valor": ctx.get("num_marcas"), "etiqueta": et_mm}
+        justif_parts.append(f"{et_mm} [{pts_mm}pts]")
+
     # Avatar
     ctx["ecommerce"] = ctx.get("madurez") == "ecommerce_funcional"
     pts_a, et_a, av_id = score_avatar(ctx, avatares, weights)
     breakdown["avatar"] = {"puntos": pts_a, "valor_avatar_id": av_id, "etiqueta": et_a}
     justif_parts.append(f"{et_a} [{pts_a}pts]")
 
-    total = pts_d + pts_p + pts_t + pts_m + pts_a
+    total = pts_d + pts_p + pts_t + pts_m + pts_a + pts_mm
     pid, plabel = tramo_for_score(total, weights)
 
     return {

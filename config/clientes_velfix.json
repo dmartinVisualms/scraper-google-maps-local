@@ -1,0 +1,6 @@
+{
+  "_doc": "Clientes actuales de Velfix. Salen del análisis como 'descartado' con motivo 'cliente_velfix' (no se mezclan con cadenas o competidores de excluded_brands.json). Se compara el nombre sin mayúsculas, acentos ni espacios.",
+  "clientes": [
+    "Lolitamoda"
+  ]
+}

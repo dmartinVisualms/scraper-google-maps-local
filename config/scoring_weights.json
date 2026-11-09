@@ -1,44 +1,36 @@
 {
-  "_doc": "Pesos y bandas del scoring de prioridad comercial para Velfix. Total máximo: 100 pts. Editar este fichero NO requiere tocar código — el módulo src/analyzer/scoring.py lo lee en cada ejecución.",
+  "_doc": "Scoring de la campaña ABM ICP Multimarca de Velfix. Total máximo: 100 pts. Solo se puntúan los negocios clasificados como 'multimarca'; el resto queda como 'descartado' o 'revision' (puerta eliminatoria en src/analyzer/cli.py). Editable sin tocar código.",
   "criterios": {
-    "distancia_eci": {
-      "_doc": "Distancia (km) al centro El Corte Inglés más cercano. La banda 45–85km es la zona dulce: lejos para que el ECI no canibalice clientes, cerca para sentir su presencia como espejo.",
-      "peso_max": 20,
-      "bandas": [
-        {"min_km": 45, "max_km": 85, "puntos": 20, "etiqueta": "óptimo (45–85km)"},
-        {"min_km": 30, "max_km": 45, "puntos": 15, "etiqueta": "cercano (30–45km)"},
-        {"min_km": 85, "max_km": 120, "puntos": 15, "etiqueta": "lejano (85–120km)"},
-        {"min_km": 0,  "max_km": 30, "puntos": 10, "etiqueta": "sombra ECI (<30km)"},
-        {"min_km": 120, "max_km": 99999, "puntos": 10, "etiqueta": "aislado (>120km)"}
-      ]
-    },
-    "poblacion_municipio": {
-      "_doc": "Población del municipio donde se ubica el negocio. 15k–50k es la cabecera comarcal ideal.",
-      "peso_max": 15,
-      "bandas": [
-        {"min": 15000, "max": 50000, "puntos": 15, "etiqueta": "cabecera ideal (15–50k)"},
-        {"min": 50001, "max": 150000, "puntos": 12, "etiqueta": "ciudad media (50–150k)"},
-        {"min": 10000, "max": 14999, "puntos": 8, "etiqueta": "cabecera pequeña (10–15k)"},
-        {"min": 0,     "max": 9999,  "puntos": 3, "etiqueta": "rural (<10k)"},
-        {"min": 150001, "max": 99999999, "puntos": 10, "etiqueta": "gran urbe (>150k)"}
-      ]
-    },
     "num_tiendas": {
-      "_doc": "Número de tiendas que comparten marca normalizada en el dataset. Ajustado: premiamos el volumen crítico (franquicias/centrales, 8+) tanto como a la micro-cadena ideal (3–7).",
+      "_doc": "Locales propios: los de la página de tiendas de su web si existe; si no, los del dataset. 3–7 es el ICP. 8 o más queda fuera de esta campaña (cadena o franquicia).",
       "peso_max": 30,
       "bandas": [
-        {"min": 3, "max": 7,  "puntos": 30, "etiqueta": "micro-cadena ideal (3–7 locales)"},
-        {"min": 8, "max": 999, "puntos": 30, "etiqueta": "CENTRAL / FRANQUICIA (>7 locales)"},
-        {"min": 2, "max": 2,  "puntos": 15, "etiqueta": "duo (2 locales)"},
-        {"min": 1, "max": 1,  "puntos": 5,  "etiqueta": "tienda única"}
+        {"min": 3, "max": 7, "puntos": 30, "etiqueta": "micro-cadena ideal (3–7 locales)"},
+        {"min": 2, "max": 2, "puntos": 22, "etiqueta": "dúo (2 locales)"},
+        {"min": 1, "max": 1, "puntos": 12, "etiqueta": "tienda única"},
+        {"min": 8, "max": 9999, "puntos": 0, "etiqueta": "cadena (>7 locales): fuera de esta campaña"}
       ]
     },
+    "encaje_multimarca": {
+      "_doc": "Número de marcas de terceros detectadas en el catálogo, más un extra si incluye marcas típicas de multimarca (config/icp_marcas.json). Si la clasificación vino del LLM sin catálogo visible, se usa 'sin_catalogo'.",
+      "peso_max": 20,
+      "bandas": [
+        {"min": 10, "max": 9999, "puntos": 15, "etiqueta": "catálogo amplio (≥10 marcas)"},
+        {"min": 5, "max": 9, "puntos": 12, "etiqueta": "catálogo medio (5–9 marcas)"},
+        {"min": 3, "max": 4, "puntos": 8, "etiqueta": "catálogo corto (3–4 marcas)"},
+        {"min": 1, "max": 2, "puntos": 4, "etiqueta": "1–2 marcas detectadas"},
+        {"min": 0, "max": 0, "puntos": 0, "etiqueta": "sin marcas detectadas"}
+      ],
+      "extra_marcas_tipicas": 5,
+      "sin_catalogo": 6
+    },
     "madurez_digital": {
-      "_doc": "Estado del e-commerce. Se infiere de fingerprint (es_tienda) + presencia de web. Si madurez=ecommerce_funcional y la tecnología detectada está en 'por_tecnologia', su valor sobrescribe a 'valores.ecommerce_funcional'. WooCommerce y PrestaShop puntúan al máximo: son los que más sufren roturas de stock y más necesitan Velfix. El negocio solo en redes (sin venta online) es cliente premium: tiene pulmón físico y está listo para la unificación digital.",
+      "_doc": "Estado del e-commerce. WooCommerce y PrestaShop puntúan al máximo: son los que más sufren roturas de stock y más necesitan Velfix. El negocio con web pero sin venta online es cliente premium: tiene pulmón físico y está listo para la unificación digital. 'web_no_accesible' = la web no cargó (antes se confundía con 'solo_redes_sociales').",
       "peso_max": 20,
       "valores": {
         "ecommerce_funcional": 10,
         "solo_redes_sociales": 15,
+        "web_no_accesible": 5,
         "sin_presencia": 5
       },
       "por_tecnologia": {
@@ -48,12 +40,34 @@
         "Shopify": 8
       }
     },
+    "distancia_eci": {
+      "_doc": "Distancia (km) al El Corte Inglés más cercano. 45–85 km es la zona dulce. Peso rebajado de 20 a 10 para dar hueco al encaje multimarca.",
+      "peso_max": 10,
+      "bandas": [
+        {"min_km": 45, "max_km": 85, "puntos": 10, "etiqueta": "óptimo (45–85km)"},
+        {"min_km": 30, "max_km": 45, "puntos": 7, "etiqueta": "cercano (30–45km)"},
+        {"min_km": 85, "max_km": 120, "puntos": 7, "etiqueta": "lejano (85–120km)"},
+        {"min_km": 0,  "max_km": 30, "puntos": 5, "etiqueta": "sombra ECI (<30km)"},
+        {"min_km": 120, "max_km": 99999, "puntos": 5, "etiqueta": "aislado (>120km)"}
+      ]
+    },
+    "poblacion_municipio": {
+      "_doc": "Población del municipio. 15k–50k es la cabecera comarcal ideal. Peso rebajado de 15 a 10.",
+      "peso_max": 10,
+      "bandas": [
+        {"min": 15000, "max": 50000, "puntos": 10, "etiqueta": "cabecera ideal (15–50k)"},
+        {"min": 50001, "max": 150000, "puntos": 8, "etiqueta": "ciudad media (50–150k)"},
+        {"min": 150001, "max": 99999999, "puntos": 7, "etiqueta": "gran urbe (>150k)"},
+        {"min": 10000, "max": 14999, "puntos": 5, "etiqueta": "cabecera pequeña (10–15k)"},
+        {"min": 0,     "max": 9999,  "puntos": 2, "etiqueta": "rural (<10k)"}
+      ]
+    },
     "encaje_avatar": {
-      "_doc": "Encaje contra los avatares definidos en config/scoring_avatars.json. Se elige el avatar con mayor encaje.",
-      "peso_max": 15,
+      "_doc": "Encaje con los avatares de config/scoring_avatars.json. Peso rebajado de 15 a 10.",
+      "peso_max": 10,
       "valores": {
-        "encaje_claro": 15,
-        "encaje_parcial": 7,
+        "encaje_claro": 10,
+        "encaje_parcial": 5,
         "no_encaja": 0
       }
     }

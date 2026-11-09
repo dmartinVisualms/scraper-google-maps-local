@@ -1,0 +1,27 @@
+{
+  "_doc": "Avatares guardados para una futura campaña de franquicias / centrales. No se usan en la campaña ICP Multimarca.",
+  "campana": "franquicias",
+  "avatares": [
+    {
+      "id": 4,
+      "nombre": "Nodos de Volumen / Redes",
+      "descripcion": "Centrales de compras, marcas con showrooms distribuidores, o sedes centrales de franquicias de moda. El volumen de tiendas (8+) es el criterio que define el encaje; población y distancia son cajón de sastre, por eso el encaje exige cumplir los 3 criterios.",
+      "criterios": {
+        "poblacion_municipio": [
+          0,
+          99999999
+        ],
+        "distancia_eci_km": [
+          0,
+          99999
+        ],
+        "num_tiendas": [
+          8,
+          999
+        ],
+        "ecommerce_requerido": false
+      },
+      "encaje_parcial_si_cumple_n": 3
+    }
+  ]
+}

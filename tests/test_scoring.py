@@ -86,43 +86,43 @@ def test_real_configs_load_smoke(real_weights, real_avatars, real_eci):
 
 def test_score_distancia_eci_optimo(real_weights):
     pts, etiqueta = score_distancia_eci(60, real_weights)
-    assert pts == 20
+    assert pts == 10
     assert "óptimo" in etiqueta
 
 
 def test_score_distancia_eci_sombra(real_weights):
     pts, _ = score_distancia_eci(15, real_weights)
-    assert pts == 10
+    assert pts == 5
 
 
 def test_score_distancia_eci_aislado(real_weights):
     pts, _ = score_distancia_eci(150, real_weights)
-    assert pts == 10
+    assert pts == 5
 
 
 def test_score_poblacion_ideal(real_weights):
     pts, etiqueta = score_poblacion(25000, real_weights)
-    assert pts == 15
+    assert pts == 10
     assert "ideal" in etiqueta
 
 
 def test_score_poblacion_rural(real_weights):
     pts, _ = score_poblacion(3000, real_weights)
-    assert pts == 3
+    assert pts == 2
 
 
 def test_score_poblacion_urbano(real_weights):
     pts, etiqueta = score_poblacion(300000, real_weights)
-    assert pts == 10
+    assert pts == 7
     assert "gran urbe" in etiqueta
 
 
 def test_score_num_tiendas(real_weights):
     assert score_num_tiendas(4, real_weights)[0] == 30
-    assert score_num_tiendas(2, real_weights)[0] == 15
-    assert score_num_tiendas(1, real_weights)[0] == 5
-    # Volumen crítico (central/franquicia) empata con la micro-cadena ideal
-    assert score_num_tiendas(10, real_weights)[0] == 30
+    assert score_num_tiendas(2, real_weights)[0] == 22
+    assert score_num_tiendas(1, real_weights)[0] == 12
+    # ICP Multimarca: 8 o más locales queda fuera de esta campaña
+    assert score_num_tiendas(10, real_weights)[0] == 0
 
 
 def test_score_madurez(real_weights):
@@ -158,7 +158,7 @@ def test_score_avatar_match_avatar1(real_avatars, real_weights):
     }
     pts, etiqueta, av_id = score_avatar(ctx, real_avatars, real_weights)
     assert av_id == 1
-    assert pts == 15
+    assert pts == 10
     assert "claro" in etiqueta
 
 
@@ -173,22 +173,19 @@ def test_score_avatar_partial(real_avatars, real_weights):
     }
     pts, etiqueta, av_id = score_avatar(ctx, real_avatars, real_weights)
     assert av_id == 3
-    assert pts == 7
+    assert pts == 5
     assert "parcial" in etiqueta
 
 
-def test_score_avatar_volume_node_avatar4(real_avatars, real_weights):
-    # Central/franquicia: 50 tiendas con geo válida → Avatar 4 encaje claro.
-    ctx = {
-        "poblacion": 500,
-        "distancia_eci_km": 200,
-        "num_tiendas": 50,
-        "ecommerce": False,
-    }
-    pts, etiqueta, av_id = score_avatar(ctx, real_avatars, real_weights)
-    assert av_id == 4
-    assert pts == 15
-    assert "claro" in etiqueta
+def test_avatar4_fuera_de_la_campana_icp(real_avatars, real_weights):
+    # El Avatar 4 (centrales/franquicias) se guarda aparte y ya no puntúa aquí.
+    import json
+    from pathlib import Path
+    assert all(a["id"] != 4 for a in real_avatars)
+    franq = json.loads((Path(__file__).parents[1] / "config" / "scoring_avatars_franquicias.json").read_text())
+    assert franq["campana"] == "franquicias" and franq["avatares"][0]["id"] == 4
+    ctx = {"poblacion": 500, "distancia_eci_km": 200, "num_tiendas": 50, "ecommerce": False}
+    assert score_avatar(ctx, real_avatars, real_weights)[2] != 4
 
 
 def test_score_avatar_no_match(real_avatars, real_weights):
@@ -224,7 +221,16 @@ def test_count_stores_groups_by_brand_minus_municipio():
     counts = count_stores_by_brand(rows)
     assert counts["lolitamoda"] == 3
     assert counts["casais"] == 2
-    assert counts["único concept store"] == 1
+    assert counts["unico concept store"] == 1
+
+
+def test_count_stores_une_acentos_y_sufijos_de_lugar():
+    # Dándara aparecía repartida en 'dandara', 'dándara' y 'dándara vilagarcía arousa'.
+    rows = [{"nombre": "Dandara", "municipio_origen": m} for m in ("Lugo", "Mos", "Ribadeo")]
+    rows += [{"nombre": "Dándara", "municipio_origen": "Lalín"},
+             {"nombre": "Dándara Vilagarcía Arousa", "municipio_origen": "Villagarcía de Arosa"}]
+    counts = count_stores_by_brand(rows)
+    assert num_tiendas_for("Dándara Vilagarcía Arousa", counts, "Villagarcía de Arosa") == 5
 
 
 def test_distinct_shops_not_merged_by_first_word():
@@ -264,12 +270,14 @@ def test_compute_score_microcadena_galicia(real_weights, real_avatars, real_eci)
         "num_tiendas": 4,
         "madurez": "ecommerce_funcional",
         "tecnologia": "WooCommerce",
+        "num_marcas": 12, "n_tipicas": 3,
     }
     result = compute_score(ctx, eci_locations=real_eci, avatares=real_avatars, weights=real_weights)
-    # Distancia ~16km → sombra ECI = 10pts. Pob 31k → ideal = 15. Tiendas 4 → 30.
-    # Madurez ecommerce+Woo → 20. Avatar 1: pob ✓ dist ✗ tiendas ✓ (ecommerce no se evalúa) = 2/3 → no encaja.
-    # Total = 10 + 15 + 30 + 20 + 0 = 75 → P1
-    assert result["puntuacion_total"] == 75
+    # Distancia ~16km → sombra ECI = 5pts. Pob 31k → ideal = 10. Tiendas 4 → 30.
+    # Madurez ecommerce+Woo → 20. Avatar 1: 2/3 → no encaja = 0.
+    # Encaje multimarca: 12 marcas (15) + marcas típicas (+5) = 20.
+    # Total = 5 + 10 + 30 + 20 + 0 + 20 = 85 → P1
+    assert result["puntuacion_total"] == 85
     assert result["prioridad"] == "P1"
     assert "ECI" in result["justificacion"]
     assert "tiendas" in result["justificacion"]

@@ -218,7 +218,7 @@
   <div style="position:fixed; top:6px; right:12px; background:#f59e0b; color:#1c1917; font-size:0.7rem; font-weight:700; letter-spacing:0.06em; padding:2px 8px; border-radius:0 0 6px 6px; z-index:1000;">ICP MULTIMARCA · :8001</div>
   <div class="topbar">
     <a href="/" class="back-link">← Volver</a>
-    <h1>Analizador de resultados <span style="font-size:0.6em; color:#f59e0b; font-weight:600;">· ICP Multimarca v0.9.10.1</span></h1>
+    <h1>Analizador de resultados <span style="font-size:0.6em; color:#f59e0b; font-weight:600;">· ICP Multimarca v0.9.10.2</span></h1>
   </div>
 
   <div class="card">
@@ -446,13 +446,15 @@
     const CRIT_LABELS = {
       distancia_eci: 'Distancia al El Corte Inglés más cercano',
       poblacion_municipio: 'Población del municipio',
-      num_tiendas: 'Nº de tiendas de la misma marca',
+      num_tiendas: 'Nº de locales (página de tiendas de su web o, si no, dataset)',
+      encaje_multimarca: 'Encaje multimarca (marcas de terceros en el catálogo)',
       madurez_digital: 'Madurez digital',
       encaje_avatar: 'Encaje con avatar comercial',
     };
     const VAL_LABELS = {
       ecommerce_funcional: 'E-commerce funcional (tecnología no listada)',
       solo_redes_sociales: 'Web sin tienda online / solo redes',
+      web_no_accesible: 'Web que no carga',
       sin_presencia: 'Sin web',
       encaje_claro: 'Encaje claro', encaje_parcial: 'Encaje parcial', no_encaja: 'No encaja',
     };
@@ -465,7 +467,10 @@
         const total = crits.reduce((a, [, c]) => a + c.peso_max, 0);
         document.getElementById('scoring-total').textContent = `· ${crits.length} criterios, máx. ${total} pts`;
 
-        let html = '<h3>Criterios</h3><table>';
+        let html = `<h3>Puerta: tipo de negocio</h3>
+          <div class="doc" style="font-size:0.78rem; color:#94a3b8">Antes de puntuar, cada negocio se clasifica a partir de su web (marcas del catálogo, página de tiendas, textos de franquicia o colección propia, sector) y, si no tiene web, de los resultados de Google sobre su Instagram. Los dudosos pasan por Claude Haiku.
+          Solo se puntúan los <b style="color:#fbbf24">multimarca</b>. Los de <b>marca propia</b>, <b>marca propia con franquicias</b>, <b>franquiciados monomarca</b>, <b>no moda</b> y <b>clientes de Velfix</b> quedan como <b>descartado</b>; los <b>dudosos</b>, como <b>revisión</b> manual.</div>
+          <h3>Criterios</h3><table>`;
         for (const [key, c] of crits) {
           html += `<tr><td class="crit">${esc(CRIT_LABELS[key] || key)}</td><td class="pts crit">máx. ${c.peso_max}</td></tr>`;
           if (c._doc) html += `<tr><td colspan="2" style="border:none"><div class="doc">${esc(c._doc)}</div></td></tr>`;
@@ -475,6 +480,10 @@
             html += `<tr><td>E-commerce ${esc(k)}</td><td class="pts">${v}</td></tr>`;
           for (const [k, v] of Object.entries(c.valores || {}))
             html += `<tr><td>${esc(VAL_LABELS[k] || k)}</td><td class="pts">${v}</td></tr>`;
+          if (c.extra_marcas_tipicas)
+            html += `<tr><td>Extra si incluye marcas típicas de multimarca</td><td class="pts">+${c.extra_marcas_tipicas}</td></tr>`;
+          if (c.sin_catalogo)
+            html += `<tr><td>Multimarca sin catálogo visible (clasificado por Instagram/LLM)</td><td class="pts">${c.sin_catalogo}</td></tr>`;
         }
         html += '</table><h3>Tramos de prioridad</h3><table>';
         for (const t of weights.tramos_prioridad)
