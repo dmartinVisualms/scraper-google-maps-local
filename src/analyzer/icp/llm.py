@@ -71,7 +71,7 @@ def build_prompt(casos: List[dict]) -> str:
             f'Categoría en Google Maps: {c.get("categoria", "")}\nWeb: {c.get("web") or "sin web"}\n'
             f'{c.get("texto", "").strip()}\n</negocio>'
         )
-    return INSTRUCCIONES + "\n\n" + "\n\n".join(bloques)
+    return "Clasifica estos negocios:\n\n" + "\n\n".join(bloques)
 
 
 def parse_response(stdout: str) -> Dict[str, Clasificacion]:
@@ -94,9 +94,14 @@ def parse_response(stdout: str) -> Dict[str, Clasificacion]:
 async def _run_batch(casos: List[dict], timeout_s: int = 180) -> Dict[str, Clasificacion]:
     _CWD.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY")}
+    # Sin herramientas, sin settings de usuario (hooks, plugins, memoria), sin skills, sin MCP
+    # y sin guardar sesión: ~1.200 tokens por llamada en vez de ~50.000.
     proc = await asyncio.create_subprocess_exec(
         "claude", "-p", "--model", MODEL, "--output-format", "json",
         "--json-schema", json.dumps(SCHEMA),
+        "--system-prompt", INSTRUCCIONES,
+        "--tools", "", "--setting-sources", "project", "--disable-slash-commands",
+        "--strict-mcp-config", "--no-session-persistence",
         stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         cwd=str(_CWD), env=env,
     )

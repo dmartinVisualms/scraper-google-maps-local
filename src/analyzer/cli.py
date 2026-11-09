@@ -180,8 +180,10 @@ def _clientes() -> List[str]:
         return []
 
 
-async def analyze(rows: List[dict], args: argparse.Namespace) -> List[dict]:
-    """Devuelve las filas de la pestaña Análisis (incluye descartados y en revisión)."""
+async def analyze(rows: List[dict], args: argparse.Namespace,
+                  ig_budget: Optional[DataForSeoBudget] = None) -> List[dict]:
+    """Devuelve las filas de la pestaña Análisis (incluye descartados y en revisión).
+    `ig_budget` permite compartir el límite de DataForSEO entre varios ficheros."""
     brands = load_brands(args.brands_path)
     clientes = _clientes()
     marcas_cfg = load_marcas_config()
@@ -212,7 +214,8 @@ async def analyze(rows: List[dict], args: argparse.Namespace) -> List[dict]:
     # ── B. Reglas + Instagram para negocios sin web ──
     ig_creds = _dataforseo_creds()
     max_usd = args.dataforseo_max_usd if args.dataforseo_max_usd is not None else default_max_usd()
-    ig_budget = DataForSeoBudget(max_usd) if ig_creds else None
+    if ig_budget is None and ig_creds:
+        ig_budget = DataForSeoBudget(max_usd)
     ig_cache = SearchCache()
     llm_cache = JsonCache(_CACHE_DIR / "llm.json", enabled=not args.refresh)
 
