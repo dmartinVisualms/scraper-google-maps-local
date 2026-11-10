@@ -191,6 +191,9 @@ async def _run(args: argparse.Namespace) -> None:
             "tecnologia": tecnologia if tecnologia and tecnologia != "-" else None,
         }
         score = compute_score(ctx, eci_locations=eci_locations, avatares=avatares, weights=weights)
+        if tecnologia == "Velfix":  # su web ya está hecha con Velfix: interés nulo para captación
+            score = {**score, "prioridad": "Ya cliente", "puntuacion_total": 0,
+                     "justificacion": f"Ya cliente (web hecha con Velfix) — sin serlo sería {score['prioridad']}"}
 
         # Email: real desde el HTML ya descargado, o ficticio basado en el nombre
         email = get_email(html, nombre)
