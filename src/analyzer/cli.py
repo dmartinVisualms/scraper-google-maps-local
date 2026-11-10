@@ -318,11 +318,13 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
         entry = webs.get(host) if host else None
         sig = _signals_from(entry)
         es_cliente = norm(nombre).replace(" ", "") in clientes or any(c and c in norm(nombre).replace(" ", "") for c in clientes)
-        clas = (Clasificacion("cliente_velfix", 1.0, ["está en config/clientes_velfix.json"])
-                if es_cliente else classify(sig, nombre, marcas_cfg,
-                                            n_tiendas_dataset=num_tiendas_for(nombre, brand_counts, municipio)))
+        motivo_cliente = "está en config/clientes_velfix.json" if es_cliente else ""
+        if not es_cliente and (entry or {}).get("tecnologia") == "Velfix":
+            es_cliente, motivo_cliente = True, "su web está hecha con Velfix (Meigasoft)"
+        # Los clientes se clasifican igual que el resto; al final se marcan «Ya cliente» con 0 puntos.
+        clas = classify(sig, nombre, marcas_cfg, n_tiendas_dataset=num_tiendas_for(nombre, brand_counts, municipio))
         item = {"i": i, "row": row, "nombre": nombre, "municipio": municipio, "web": web, "web_fuente": web_fuente,
-                "host": host, "entry": entry, "sig": sig, "clas": clas,
+                "host": host, "entry": entry, "sig": sig, "clas": clas, "cliente": motivo_cliente,
                 "instagram": (entry or {}).get("instagram", ""), "ig_fuente": "web" if (entry or {}).get("instagram") else "-",
                 "snippets": []}
         item["sin_web"] = (not web or is_social_url(web)) and not es_cliente
@@ -471,6 +473,11 @@ async def analyze(rows: List[dict], args: argparse.Namespace,
             fila.update(motivo_descarte="", revisar_manual="",
                         prioridad=prioridad, puntuacion=score["puntuacion_total"],
                         justificacion=f"{etiqueta} — {principal} | {score['justificacion']}{nota}")
+        # Ya cliente: sigue en las listas, con 0 puntos (interés nulo para captación).
+        fila["prioridad_sin_cliente"] = fila["prioridad"] if it["cliente"] else ""
+        if it["cliente"]:
+            fila.update(prioridad="Ya cliente", puntuacion=0, revisar_manual="",
+                        justificacion=f"Ya cliente ({it['cliente']}) — sin serlo sería {fila['prioridad_sin_cliente']}")
         fila.update(
             email=entry.get("email") or fictitious_email(nombre),
             instagram=it["instagram"], instagram_fuente=it["ig_fuente"],

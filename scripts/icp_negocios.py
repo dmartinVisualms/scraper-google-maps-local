@@ -19,7 +19,7 @@ from src.analyzer.scoring import _GENERIC_BRAND_WORDS, _brand_key
 
 OUT = Path(__file__).resolve().parents[1] / "out"
 SRC, DEST = OUT / "icp_unificado.xlsx", OUT / "icp_negocios.xlsx"
-_PRIO = {"P1": 1, "P2": 2, "P3": 3, "P4": 4, "revision": 5, "descartado": 6}
+_PRIO = {"Ya cliente": 0, "P1": 1, "P2": 2, "P3": 3, "P4": 4, "revision": 5, "descartado": 6}
 _HOSTS_COMPARTIDOS = ("instagram.", "facebook.", "bit.ly", "linktr.ee", "google.", "wa.me", "goo.gl", "tiktok.")
 
 
@@ -93,7 +93,8 @@ def agrupar(rows: list) -> list:
 
 
 def resumen(g: list, unido_por: set) -> dict:
-    mejor = min(g, key=lambda r: (_PRIO.get(r["prioridad"], 9), -(r.get("puntuacion") or 0)))
+    mejor = min(g, key=lambda r: (_PRIO.get(r["prioridad"], 9), _PRIO.get(r.get("prioridad_sin_cliente"), 9),
+                                  -(r.get("puntuacion") or 0)))
     locales = {(_dir(r.get("direccion")) or r["nombre"]) for r in g}
     uniq = lambda xs: ", ".join(dict.fromkeys(x for x in xs if x))  # noqa: E731
     return {
@@ -102,6 +103,7 @@ def resumen(g: list, unido_por: set) -> dict:
         "locales_csv": len(locales),
         "municipios": uniq(r.get("municipio_origen") for r in g),
         "prioridad": mejor["prioridad"], "puntuacion": mejor.get("puntuacion"),
+        "prioridad_sin_cliente": mejor.get("prioridad_sin_cliente") or "",
         "tipo_negocio": mejor["tipo_negocio"], "etiqueta": mejor.get("etiqueta") or "",
         "num_marcas": mejor.get("num_marcas"), "marcas_detectadas": mejor.get("marcas_detectadas"),
         "num_tiendas_web": mejor.get("num_tiendas_web"), "es_tienda_online": mejor.get("es_tienda"),

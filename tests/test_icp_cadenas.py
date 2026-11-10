@@ -32,3 +32,9 @@ def test_agrupar_cadenas_une_variantes():
             r("Calzados", "Lugo"), r("Calzados", "Vigo")]
     tam = sorted(len(g) for g in agrupar_cadenas(rows))
     assert tam == [1, 1, 2, 2, 3], tam  # 'Calzados' genérico no une
+
+
+def test_cliente_por_nombre_queda_ya_cliente_con_0_puntos():
+    rows = [{"nombre": "Lolitamoda Noia", "municipio_origen": "Noia", "direccion": "z", "web": ""}]
+    r = asyncio.run(analyze(rows, _args()))[0]
+    assert r["prioridad"] == "Ya cliente" and r["puntuacion"] == 0 and r["prioridad_sin_cliente"]

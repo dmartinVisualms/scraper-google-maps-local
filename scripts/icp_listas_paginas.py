@@ -1,11 +1,21 @@
 # Revisión manual 2026-11-09 (Opus): clasifica los negocios P1–P3 en listas de páginas personalizadas.
-# Uso: python scripts/icp_listas_paginas.py <carpeta con candidatos.json>. Las exclusiones por nombre son decisiones de esa revisión.
+# Uso: python -m scripts.icp_listas_paginas (tras scripts.icp_unificar y scripts.icp_negocios). Las exclusiones por nombre son decisiones de esa revisión.
 import json, re, sys
 from collections import Counter
+from pathlib import Path
 from unidecode import unidecode
 import openpyxl
-S = sys.argv[1]
-c = json.load(open(f"{S}/candidatos.json"))
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
+
+OUT = Path(__file__).resolve().parents[1] / "out"
+_ws = openpyxl.load_workbook(OUT / "icp_negocios.xlsx", read_only=True)["Negocios"]
+_it = _ws.iter_rows(values_only=True)
+_h = list(next(_it))
+TODOS = [dict(zip(_h, r)) for r in _it]
+# Candidatos: P1–P3, y los clientes que sin serlo serían P1–P3 (se quedan, marcados «Ya cliente» con 0 puntos).
+c = [n for n in TODOS if n["prioridad"] in ("P1", "P2", "P3")
+     or (n["prioridad"] == "Ya cliente" and n.get("prioridad_sin_cliente") in ("P1", "P2", "P3"))]
 p = lambda s: unidecode((s or "").lower())
 
 CADENAS = {"merkal calzados": "cadena (22+ locales)", "courir": "cadena internacional", "snipes": "cadena internacional",
@@ -41,23 +51,73 @@ filas = []
 for n in c:
     nombre = n["negocio"]
     motivo = ""
-    if "lolitamoda" in (n["web"] or "") or "lolita" in p(nombre):
-        pag, motivo = "fuera", "ya es cliente de Velfix (Lolitamoda)"
-    elif match(CADENAS, nombre) or (n["etiqueta"] or "").startswith("CADENA"):
+    prio = n.get("prioridad_sin_cliente") or n["prioridad"] if n["prioridad"] == "Ya cliente" else n["prioridad"]
+    if match(CADENAS, nombre) or (n["etiqueta"] or "").startswith("CADENA"):
         pag, motivo = "cadena (aparte)", match(CADENAS, nombre) or n["etiqueta"]
     elif match(FUERA, nombre) is not None or match(KW_FUERA, nombre + " " + (n["categorias"] or "")):
         pag, motivo = "fuera", (match(FUERA, nombre) or match(KW_FUERA, nombre + " " + (n["categorias"] or "")) or "fuera de sector")
     else:
         m = n["num_marcas"] or 0
-        if n["prioridad"] == "P1" and m >= 5 and not match(DEBILES, nombre):
+        if prio == "P1" and m >= 5 and not match(DEBILES, nombre):
             pag = "P1"
-        elif n["prioridad"] in ("P1", "P2") and m >= 5 and contacto(n) and not match(DEBILES, nombre):
+        elif prio in ("P1", "P2") and m >= 5 and contacto(n) and not match(DEBILES, nombre):
             pag = "P2"
         else:
             pag = "P3"
         motivo = match(DEBILES, nombre) or ""
-    filas.append({**n, "pagina": pag, "nota_revision": motivo})
-json.dump(filas, open(f"{S}/listas.json", "w"), ensure_ascii=False, default=str)
-print(Counter(f["pagina"] for f in filas))
-for f in filas:
-    if f["pagina"] == "P1": print("P1", f["negocio"], "|", f["municipios"][:40], "|", f["num_marcas"], f["puntuacion"])
+    ya = "Ya cliente" if n["prioridad"] == "Ya cliente" else ""
+    filas.append({**n, "pagina": pag, "ya_cliente": ya, "nota_revision": motivo})
+print(Counter(f["pagina"] for f in filas), Counter(f["pagina"] for f in filas if f["ya_cliente"]))
+
+COLS = [("pagina", "Página"), ("ya_cliente", "Ya cliente"), ("negocio", "Negocio"), ("municipios", "Municipios"),
+        ("locales_csv", "Locales en Maps"), ("num_tiendas_web", "Tiendas según su web"), ("prioridad", "Prioridad ICP"),
+        ("prioridad_sin_cliente", "Prioridad sin ser cliente"), ("puntuacion", "Puntos"), ("num_marcas", "Nº marcas"),
+        ("marcas_detectadas", "Marcas que trabaja"), ("es_tienda_online", "Tienda online"), ("tecnologia", "Tecnología"),
+        ("web", "Web"), ("instagram", "Instagram"), ("email", "Email"), ("telefono", "Teléfono"),
+        ("nota_revision", "Nota de la revisión"), ("evidencias", "Evidencias"), ("nombres", "Nombres agrupados"),
+        ("direcciones", "Direcciones")]
+ANCHO = {"negocio": 30, "municipios": 30, "marcas_detectadas": 50, "evidencias": 60, "nombres": 40, "direcciones": 50,
+         "web": 28, "instagram": 32, "email": 28, "nota_revision": 34}
+wb = openpyxl.Workbook()
+wb.remove(wb.active)
+naranja = PatternFill("solid", fgColor="FFE6D5")
+
+
+def hoja(nombre, rows, cols=COLS):
+    ws = wb.create_sheet(nombre)
+    ws.append([t for _, t in cols])
+    for cell in ws[1]:
+        cell.font, cell.fill = Font(bold=True), naranja
+    for r in rows:
+        ws.append([r.get(k) for k, _ in cols])
+    ws.freeze_panes, ws.auto_filter.ref = "D2", ws.dimensions
+    for i, (k, _) in enumerate(cols, 1):
+        ws.column_dimensions[get_column_letter(i)].width = ANCHO.get(k, 12)
+
+
+orden = lambda r: (bool(r["ya_cliente"]), -(r["puntuacion"] or 0), -(r["num_marcas"] or 0))  # noqa: E731
+crit = wb.create_sheet("Criterios")
+for line in [
+    ["Listas de negocios para páginas personalizadas (ABM Velfix)"], [],
+    ["Origen", "out/icp_unificado.xlsx agrupado en negocios (scripts/icp_negocios.py): mismo negocio si comparte web, Instagram, teléfono, email de su dominio, o el mismo nombre sin municipio en la misma comunidad."],
+    ["Página P1", "Prioridad ICP P1, catálogo propio con 5 o más marcas de terceros, 1–7 locales."],
+    ["Página P2", "Prioridad P1/P2 con 5 o más marcas en su web y un contacto real (email del dominio o Instagram)."],
+    ["Página P3", "El resto de multimarca: P3, pocas marcas detectadas, o multimarca deducido de su descripción/Instagram."],
+    ["Ya cliente", "Web hecha con Velfix (Meigasoft) o en config/clientes_velfix.json. Siguen en su lista, al final, con 0 puntos: interés nulo para esta campaña."],
+    ["Cadenas (aparte)", "Cadenas grandes, franquicias de grupo (Intersport) o marca propia con tiendas: otra campaña."],
+    ["Fuera de sector", "Revisión manual: ciclismo, caza y pesca, golf, hípica, ropa de trabajo/EPIs, juguetería, puericultura, airsoft…"],
+    ["Ojo", "La lista P3 no se ha revisado una a una."]]:
+    crit.append(line)
+crit["A1"].font = Font(bold=True, size=14)
+crit.column_dimensions["A"].width, crit.column_dimensions["B"].width = 20, 120
+for t in ("P1", "P2", "P3"):
+    hoja(f"Páginas {t}", sorted([f for f in filas if f["pagina"] == t], key=orden))
+hoja("Cadenas (aparte)", [f for f in filas if f["pagina"] == "cadena (aparte)"])
+hoja("Fuera de sector", [f for f in filas if f["pagina"] == "fuera"])
+ws = wb.create_sheet("Todos los negocios")
+ws.append(_h)
+for n in TODOS:
+    ws.append([n.get(k) for k in _h])
+ws.freeze_panes = "B2"
+wb.save(OUT / "icp_paginas_personalizadas.xlsx")
+print(OUT / "icp_paginas_personalizadas.xlsx")
