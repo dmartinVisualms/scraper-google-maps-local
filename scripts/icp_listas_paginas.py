@@ -123,6 +123,9 @@ for line in [
     ["Ya cliente", "Web hecha con Velfix (Meigasoft) o en config/clientes_velfix.json. Siguen en su lista, al final, con 0 puntos: interés nulo para esta campaña. (Ya contados en sus pestañas.)", *cuenta(lambda r: r["ya_cliente"])],
     ["Cadenas (aparte)", "Cadenas grandes, franquicias de grupo (Intersport) o marca propia con tiendas: otra campaña.", *por_pag("cadena (aparte)")],
     ["Fuera de sector", "Revisión manual: ciclismo, caza y pesca, golf, hípica, ropa de trabajo/EPIs, juguetería, puericultura, airsoft…", *por_pag("fuera")],
+    ["Sin lista: dudosos", "Prioridad «revision»: no se pudo clasificar (sin web accesible o web sin marcas nombradas). Solo están en «Todos los negocios».", *(lambda g: (len(g), sum(1 for n in g if url_pagina(n))))([n for n in TODOS if n["prioridad"] == "revision"])],
+    ["Sin lista: descartados", "Prioridad «descartado»: no es moda, marca propia o franquicia. Solo están en «Todos los negocios».", *(lambda g: (len(g), sum(1 for n in g if url_pagina(n))))([n for n in TODOS if n["prioridad"] == "descartado"])],
+    ["Sin lista: P4", "Multimarca con puntuación baja (P4), fuera de las listas de páginas. Solo están en «Todos los negocios».", *(lambda g: (len(g), sum(1 for n in g if url_pagina(n))))([n for n in TODOS if n["prioridad"] == "P4"])],
     ["Ojo", "La lista P3 no se ha revisado una a una. «Página personalizada» = URL publicada en velfix.com/sectores/tiendas-ropa/ (abm-tiendas/out-prod), cruzada por dominio web."]]:
     crit.append(line)
 crit["A1"].font = Font(bold=True, size=14)
