@@ -1,4 +1,4 @@
-# Google Maps Scraper `v0.9.10.7` · Versión Especial ICP Multimarca
+# Google Maps Scraper `v0.9.10.8` · Versión Especial ICP Multimarca
 
 > **Versión Especial ICP Multimarca.** El analizador clasifica cada negocio (multimarca, marca propia, marca propia con franquicias, franquiciado monomarca, no moda, dudoso) antes de puntuar, y solo puntúa los multimarca. Señales: marcas del catálogo de su web, página de tiendas (locales reales por código postal), textos de franquicia o colección propia y sector; sin web, fragmentos de Instagram vía DataForSEO (máx. $1 por ejecución). Los dudosos pasan por Claude Haiku 5.5 con `claude -p` y el login del plan Team. Configuración: `config/icp_marcas.json`, `config/scoring_weights.json`, `config/clientes_velfix.json`; el Avatar 4 está en `config/scoring_avatars_franquicias.json`. Plan: `abm-tiendas/plan-analizador-icp.md`.
 
